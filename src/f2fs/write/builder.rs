@@ -15,7 +15,7 @@ use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, 
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
     CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, CURSEG_COLD_NODE, CURSEG_HOT_NODE, CURSEG_WARM_NODE,
-    DEFAULT_BLOCKS_PER_SEGMENT, NR_CURSEG_TYPE,
+    DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
@@ -66,6 +66,8 @@ struct PendingDir {
     /// 目录自身的修改时间 (秒), 用于重写 inode 时还原时间戳。
     mtime_secs: u64,
     mtime_nsecs: u32,
+    /// 目录深度 (根=0), 写入 inode.i_current_depth。
+    depth: u32,
 }
 
 /// F2FS 镜像构建器。
@@ -173,6 +175,7 @@ impl F2fsBuilder {
                 &self.cfg.source_dir.clone(),
                 F2FS_ROOT_INO,
                 &self.cfg.mount_point.clone(),
+                0,
             )?;
         }
 
@@ -212,7 +215,7 @@ impl F2fsBuilder {
             .with_blocks(2)
             .with_timestamp(self.mkfs_time)
             .with_pino(F2FS_ROOT_INO)
-            .with_depth(1)
+            .with_depth(0)
             .with_name(b"/")
             .with_addrs(vec![dentry_blkaddr]);
         // 应用 SELinux 上下文 (若提供)
@@ -244,13 +247,20 @@ impl F2fsBuilder {
             is_root: true,
             mtime_secs: self.mkfs_time,
             mtime_nsecs: 0,
+            depth: 0,
         });
 
         Ok(())
     }
 
     /// 递归装载目录: 为每个子项创建 inode, 收集 dentry, 推入待写目录栈。
-    fn load_directory(&mut self, dir_path: &Path, parent_nid: u32, fs_path: &str) -> Result<()> {
+    fn load_directory(
+        &mut self,
+        dir_path: &Path,
+        parent_nid: u32,
+        fs_path: &str,
+        depth: u32,
+    ) -> Result<()> {
         let entries: Vec<_> = fs::read_dir(dir_path)?.collect::<std::result::Result<_, _>>()?;
         // 排序保证可复现
         let mut entries = entries;
@@ -290,7 +300,7 @@ impl F2fsBuilder {
                     .with_blocks(2)
                     .with_timestamp_nsecs(mtime.0, mtime.1)
                     .with_pino(parent_nid)
-                    .with_depth(1)
+                    .with_depth(depth + 1)
                     .with_name(name.as_bytes())
                     .with_addrs(vec![dentry_blkaddr]);
                 let inode = self.apply_selinux(inode, &child_fs_path);
@@ -316,10 +326,11 @@ impl F2fsBuilder {
                     is_root: false,
                     mtime_secs: mtime.0,
                     mtime_nsecs: mtime.1,
+                    depth: depth + 1,
                 });
 
                 // 递归
-                self.load_directory(&entry_path, nid, &child_fs_path)?;
+                self.load_directory(&entry_path, nid, &child_fs_path, depth + 1)?;
             } else if meta.is_file() {
                 let nid = self.nat.alloc_nid().0;
                 let (uid, gid, mode) = self.fs_config_attrs(&child_fs_path, false);
@@ -334,18 +345,28 @@ impl F2fsBuilder {
                 self.valid_inode_count += 1;
                 self.valid_block_count += 1;
 
-                // 写入文件数据块
-                let data_addrs = self.write_file_data(&data, nid)?;
-
-                let blocks = data_addrs.len() as u64 + 1; // 数据块 + node 块
-                let inode = InodeBuilder::new_file((mode & 0o7777) as u16, uid, gid)
-                    .with_links(1)
-                    .with_size(file_size)
-                    .with_blocks(blocks)
-                    .with_timestamp_nsecs(mtime.0, mtime.1)
-                    .with_pino(parent_nid)
-                    .with_name(name.as_bytes())
-                    .with_addrs(data_addrs);
+                // 小文件内联 (不占独立数据块); 大文件分配数据块
+                let inode = if data.len() <= MAX_INLINE_DATA_SIZE {
+                    InodeBuilder::new_file((mode & 0o7777) as u16, uid, gid)
+                        .with_links(1)
+                        .with_size(file_size)
+                        .with_blocks(1)
+                        .with_timestamp_nsecs(mtime.0, mtime.1)
+                        .with_pino(parent_nid)
+                        .with_name(name.as_bytes())
+                        .with_inline_data(data)
+                } else {
+                    let data_addrs = self.write_file_data(&data, nid)?;
+                    let blocks = data_addrs.len() as u64 + 1;
+                    InodeBuilder::new_file((mode & 0o7777) as u16, uid, gid)
+                        .with_links(1)
+                        .with_size(file_size)
+                        .with_blocks(blocks)
+                        .with_timestamp_nsecs(mtime.0, mtime.1)
+                        .with_pino(parent_nid)
+                        .with_name(name.as_bytes())
+                        .with_addrs(data_addrs)
+                };
                 let inode = self.apply_selinux(inode, &child_fs_path);
                 let buf = inode.build(nid, nid, self.cp_ver);
                 self.write_block_at(node_blkaddr, &buf)?;
@@ -442,7 +463,7 @@ impl F2fsBuilder {
                 .with_blocks(2)
                 .with_timestamp_nsecs(dir.mtime_secs, dir.mtime_nsecs)
                 .with_pino(dir.pino)
-                .with_depth(1)
+                .with_depth(dir.depth)
                 .with_name(if dir.is_root { b"/" } else { &dir.name })
                 .with_addrs(vec![dir.data_blkaddr]);
             inode = self.apply_selinux(inode, &dir.fs_path);

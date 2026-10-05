@@ -77,7 +77,8 @@ pub struct InodeBuilder {
     has_extra_attr: bool,
     projid: u32,
     inline_xattrs: Vec<InlineXattrEntry>,
-    symlink_target: Option<Vec<u8>>,
+    /// inline 数据 (符号链接目标或小文件内容, 不占独立数据块)。
+    inline_data: Option<Vec<u8>>,
 }
 
 impl Default for InodeBuilder {
@@ -109,7 +110,7 @@ impl Default for InodeBuilder {
             has_extra_attr: true,
             projid: 0,
             inline_xattrs: Vec::new(),
-            symlink_target: None,
+            inline_data: None,
         }
     }
 }
@@ -214,8 +215,16 @@ impl InodeBuilder {
     pub fn with_symlink_target(mut self, target: &str) -> Self {
         let bytes = target.as_bytes().to_vec();
         self.size = bytes.len() as u64;
-        self.symlink_target = Some(bytes);
-        self.inline_flags |= F2FS_INLINE_DATA;
+        self.inline_data = Some(bytes);
+        self.inline_flags |= F2FS_INLINE_DATA | F2FS_DATA_EXIST;
+        self
+    }
+
+    /// 内联小文件数据 (不占独立数据块); 自动置位 INLINE_DATA | DATA_EXIST。
+    pub fn with_inline_data(mut self, data: Vec<u8>) -> Self {
+        self.size = data.len() as u64;
+        self.inline_data = Some(data);
+        self.inline_flags |= F2FS_INLINE_DATA | F2FS_DATA_EXIST;
         self
     }
 
@@ -276,14 +285,14 @@ impl InodeBuilder {
 
         let addr_offset = if self.has_extra_attr { 396 } else { 360 };
 
-        if let Some(ref target) = self.symlink_target {
+        if let Some(ref data) = self.inline_data {
             // inline data: 保留槽 + 实际数据
             let reserved = addr_offset;
             buf[reserved..reserved + 4].copy_from_slice(&0u32.to_le_bytes());
             let data_off = reserved + 4;
             let max = F2FS_BLKSIZE - data_off - NODE_FOOTER_SIZE;
-            let len = target.len().min(max);
-            buf[data_off..data_off + len].copy_from_slice(&target[..len]);
+            let len = data.len().min(max);
+            buf[data_off..data_off + len].copy_from_slice(&data[..len]);
         } else {
             let max = self.addrs_per_inode();
             for (i, &addr) in self.addrs.iter().take(max).enumerate() {

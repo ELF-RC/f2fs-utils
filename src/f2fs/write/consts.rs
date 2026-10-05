@@ -41,6 +41,9 @@ pub const NR_INLINE_DENTRY_W: usize = 61;
 pub const INLINE_DENTRY_BITMAP_SIZE: usize = 8;
 pub const INLINE_RESERVED_SIZE: usize = 1;
 
+// inline data 最大容量 (inode 内可嵌入的数据上限, 保守取值兼容 extra_attr)。
+pub const MAX_INLINE_DATA_SIZE: usize = 3488;
+
 // summary 块几何
 pub const SUMMARY_SIZE: usize = 7;
 pub const SUM_FOOTER_SIZE: usize = 5;
