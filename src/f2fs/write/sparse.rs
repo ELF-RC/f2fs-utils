@@ -64,23 +64,46 @@ pub fn convert_file(path: &Path) -> Result<()> {
             run_len += 1;
             // RAW chunk 达到上限时提前 flush
             if run_type == RunType::Raw && run_len >= MAX_RAW_CHUNK_BLKS {
-                flush_chunk(&mut writer, run_type, run_len, &mut reader, blk_idx)?;
+                // run 覆盖 [blk_idx+1-run_len, blk_idx]; resume = blk_idx+1 (下一轮读)
+                flush_chunk(
+                    &mut writer,
+                    run_type,
+                    run_len,
+                    &mut reader,
+                    blk_idx + 1 - run_len,
+                    blk_idx + 1,
+                )?;
                 total_chunks += 1;
                 run_type = RunType::None;
                 run_len = 0;
             }
         } else {
             if run_len > 0 {
-                flush_chunk(&mut writer, run_type, run_len, &mut reader, blk_idx)?;
+                // 旧 run 覆盖 [blk_idx-run_len, blk_idx-1]; blk_idx 是新 run 首块
+                flush_chunk(
+                    &mut writer,
+                    run_type,
+                    run_len,
+                    &mut reader,
+                    blk_idx - run_len,
+                    blk_idx + 1,
+                )?;
                 total_chunks += 1;
             }
             run_type = cur_type;
             run_len = 1;
         }
     }
-    // flush 末尾 chunk
+    // flush 末尾 chunk: run 覆盖 [total_blks-run_len, total_blks-1]; 无下一轮
     if run_len > 0 {
-        flush_chunk(&mut writer, run_type, run_len, &mut reader, total_blks)?;
+        flush_chunk(
+            &mut writer,
+            run_type,
+            run_len,
+            &mut reader,
+            total_blks - run_len,
+            total_blks,
+        )?;
         total_chunks += 1;
     }
 
@@ -102,13 +125,15 @@ enum RunType {
     DontCare,
 }
 
-/// flush 一个 chunk; 若为 RAW 需要重读对应块的数据写入。
+/// flush 一个 chunk; RAW 需从 start_blk 重读 run_len 个块写入, 之后 reader 定位到 resume_blk。
+/// start_blk / resume_blk 均为块号 (run 末块+1 / 下一轮首块)。
 fn flush_chunk(
     writer: &mut File,
     run_type: RunType,
     run_len: u32,
     reader: &mut File,
-    next_blk_idx: u32,
+    start_blk: u32,
+    resume_blk: u32,
 ) -> Result<()> {
     match run_type {
         RunType::DontCare => {
@@ -119,18 +144,15 @@ fn flush_chunk(
             let chunk =
                 build_chunk_header(CHUNK_TYPE_RAW, run_len, run_len as usize * F2FS_BLKSIZE);
             writer.write_all(&chunk)?;
-            // 重读 run_len 个块的数据
-            let start_blk = next_blk_idx - run_len;
+            // 从 run 起点重读 run_len 个块的数据
             reader.seek(SeekFrom::Start(u64::from(start_blk) * F2FS_BLKSIZE as u64))?;
             let mut buf = vec![0u8; F2FS_BLKSIZE];
             for _ in 0..run_len {
                 reader.read_exact(&mut buf)?;
                 writer.write_all(&buf)?;
             }
-            // 恢复 reader 到 next_blk_idx 位置, 供后续循环继续读取
-            reader.seek(SeekFrom::Start(
-                u64::from(next_blk_idx) * F2FS_BLKSIZE as u64,
-            ))?;
+            // 恢复 reader 到下一轮读取位置
+            reader.seek(SeekFrom::Start(u64::from(resume_blk) * F2FS_BLKSIZE as u64))?;
         }
         RunType::None => {}
     }
