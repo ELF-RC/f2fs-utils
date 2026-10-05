@@ -15,6 +15,7 @@ pub mod error;
 pub mod file;
 pub mod types;
 pub mod volume;
+pub mod write;
 pub mod xattr;
 
 pub use consts::*;

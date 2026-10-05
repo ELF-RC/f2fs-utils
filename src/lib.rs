@@ -10,6 +10,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::must_use_candidate)]
+#![allow(clippy::return_self_not_must_use)]
 #![allow(clippy::doc_markdown)]
 // F2FS 解析天然涉及大量定长整数 (块号/大小/偏移) 的类型转换,
 // 镜像尺寸不会超过 u32 范围, 放行截断告警。
@@ -19,6 +20,11 @@
 #![allow(clippy::wildcard_imports)]
 // NAT 影子副本回退逻辑天然出现嵌套条件, 放行折叠建议。
 #![allow(clippy::collapsible_if)]
+// builder 模式: 先 Default::default() 再逐字段赋值是惯用法, 放行。
+#![allow(clippy::field_reassign_with_default)]
+// 递归装载等核心逻辑不宜强行拆分, 放行行数限制。
+#![allow(clippy::too_many_lines)]
 
 pub mod extract;
 pub mod f2fs;
+pub mod mkfs;
