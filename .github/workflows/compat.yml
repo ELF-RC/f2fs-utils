@@ -105,7 +105,10 @@ jobs:
           ( cd /mnt_check && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > B_sha.log 2>&1 || true
           test ! -s B_diff.log && grep -q ': OK' B_sha.log
       - if: always() && steps.stageB.outcome != 'success'
-        run: cat B_mount.log B_diff.log B_sha.log 2>/dev/null || true
+        run: |
+          cat B_mount.log B_diff.log B_sha.log 2>/dev/null || true
+          echo "=== kernel dmesg (f2fs mount error) ==="
+          sudo dmesg | grep -iE "f2fs|Error|BUG|invalid|checkpoint|sit|nat|inode" | tail -25 || true
 
       # ── 阶段 C:官方合成 → 自解压 ──────────────────────────
       - name: C - official mkfs+sload → our extract
@@ -162,7 +165,10 @@ jobs:
           ( cd /mnt_check_e && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > E_sha.log 2>&1 || true
           grep -q ': OK' E_sha.log
       - if: always() && steps.stageE.outcome != 'success'
-        run: cat E_mkfs.log E_mount.log E_sha.log 2>/dev/null || true
+        run: |
+          cat E_mkfs.log E_mount.log E_sha.log 2>/dev/null || true
+          echo "=== kernel dmesg (f2fs mount error) ==="
+          sudo dmesg | grep -iE "f2fs|Error|BUG|invalid|checkpoint|sit|nat|inode" | tail -25 || true
 
       # ── 状态聚合 + 门控 + artifact ──────────────────────────
       - name: Summary
