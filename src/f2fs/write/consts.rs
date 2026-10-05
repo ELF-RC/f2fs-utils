@@ -9,8 +9,8 @@ pub const SB_CHKSUM_OFFSET: usize = 3068;
 pub const MAX_VOLUME_NAME: usize = 1024;
 pub const VERSION_LEN: usize = 256;
 pub const F2FS_VERSION: &[u8] = b"5.15.0";
-pub const F2FS_MAJOR_VERSION: u32 = 1;
-pub const F2FS_MINOR_VERSION: u32 = 0;
+pub const F2FS_MAJOR_VERSION: u16 = 1;
+pub const F2FS_MINOR_VERSION: u16 = 0;
 
 // 基础几何默认值
 pub const DEFAULT_SECTOR_SIZE: u32 = 512;
