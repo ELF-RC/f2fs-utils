@@ -82,6 +82,14 @@ impl NatManager {
         self.next_nid.div_ceil(NAT_ENTRY_PER_BLOCK_W as u32)
     }
 
+    /// 返回所有已分配的 NAT 条目 (nid, ino, block_addr), 供 compact summary 的 NAT journal 使用。
+    pub fn journal_entries(&self) -> Vec<(u32, u32, u32)> {
+        self.entries
+            .iter()
+            .map(|(&nid, e)| (nid, e.ino, e.block_addr.0))
+            .collect()
+    }
+
     /// 序列化 NAT 区域为字节数据。
     pub fn to_bytes(&self) -> Vec<u8> {
         let blocks = self.nat_blocks_needed() as usize;

@@ -11,7 +11,7 @@
 
 use crate::f2fs::consts::{F2FS_BLKSIZE, F2FS_ROOT_INO};
 use crate::f2fs::types::Nid;
-use crate::f2fs::write::checkpoint::{CheckpointBuilder, SUM_JOURNAL_SIZE};
+use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
     CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, CURSEG_COLD_NODE, CURSEG_HOT_NODE, CURSEG_WARM_NODE,
@@ -25,7 +25,7 @@ use crate::f2fs::write::sit::SitManager;
 use crate::f2fs::write::ssa::SsaManager;
 use crate::f2fs::write::superblock::SuperblockBuilder;
 use crate::f2fs::write::types::FileType;
-use crate::f2fs::write::types::{F2fsFeatures, SegType, SuperblockLayout};
+use crate::f2fs::write::types::{CursegInfo, F2fsFeatures, SegType, SuperblockLayout};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -550,6 +550,9 @@ impl F2fsBuilder {
     }
 
     /// 写入双副本 checkpoint (含 compact summary)。
+    ///
+    /// F2FS 约定: pack0 ver=奇数(活跃), pack1 ver=偶数(旧); 内核选版本号大者。
+    /// 新建镜像写 pack0=1, pack1=0。
     fn write_checkpoint(&mut self) -> Result<()> {
         let curseg = self.segalloc.get_curseg_info();
         let nat_bitmap = self.nat_bitmap();
@@ -561,8 +564,51 @@ impl F2fsBuilder {
         // cp_pack 总块数 = 1 (header) + cp_payload + 1 (compact summary) + 3 (node summaries) + 1 (footer)
         let cp_pack_total = 6 + cp_payload;
 
+        // compact summary 两份共用 (NAT/SIT journal 内容一致)
+        let compact_summary = self.build_compact_summary();
+
+        // 写 pack 0 (ver=1, 活跃)
+        let cp0_header = self.build_cp_header(1, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
+        let cp0_base = self.layout.cp_blkaddr;
+        self.write_block_at(cp0_base, &cp0_header)?;
+        self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
+        for i in 0..3 {
+            let sum_blk = self.ssa.build_curseg_summary(
+                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
+                true,
+            );
+            self.write_block_at(cp0_base + 2 + cp_payload + i as u32, &sum_blk)?;
+        }
+        self.write_block_at(cp0_base + 5 + cp_payload, &cp0_header)?;
+
+        // 写 pack 1 (ver=0, 旧): 内容一致仅版本号不同
+        let cp1_header = self.build_cp_header(0, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
+        let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
+        self.write_block_at(cp1_base, &cp1_header)?;
+        self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
+        for i in 0..3 {
+            let sum_blk = self.ssa.build_curseg_summary(
+                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
+                true,
+            );
+            self.write_block_at(cp1_base + 2 + cp_payload + i as u32, &sum_blk)?;
+        }
+        self.write_block_at(cp1_base + 5 + cp_payload, &cp1_header)?;
+
+        Ok(())
+    }
+
+    /// 构建指定版本号的 checkpoint 头部 (4KiB)。
+    fn build_cp_header(
+        &self,
+        version: u64,
+        curseg: &CursegInfo,
+        nat_bitmap: &[u8],
+        sit_bitmap: &[u8],
+        cp_pack_total: u32,
+    ) -> Vec<u8> {
         let mut cp = CheckpointBuilder::new()
-            .with_version(self.cp_ver)
+            .with_version(version)
             .with_user_block_count(self.layout.block_count - u64::from(self.layout.main_blkaddr))
             .with_valid_block_count(self.valid_block_count)
             .with_free_segment_count(self.segalloc.free_segments())
@@ -572,75 +618,47 @@ impl F2fsBuilder {
             .with_valid_node_count(self.valid_node_count)
             .with_valid_inode_count(self.valid_inode_count)
             .with_next_free_nid(self.nat.next_free_nid())
-            .with_sit_bitmap(sit_bitmap.clone())
-            .with_nat_bitmap(nat_bitmap.clone())
+            .with_sit_bitmap(sit_bitmap.to_vec())
+            .with_nat_bitmap(nat_bitmap.to_vec())
             .with_cp_pack_total_block_count(cp_pack_total);
 
-        // curseg 指针 (hot/warm/cold, 各前 3 个槽)
-        cp.set_cur_node_seg(0, curseg.node_segno[0], curseg.node_blkoff[0]); // HOT_NODE
-        cp.set_cur_node_seg(1, curseg.node_segno[1], curseg.node_blkoff[1]); // WARM_NODE
-        cp.set_cur_node_seg(2, curseg.node_segno[2], curseg.node_blkoff[2]); // COLD_NODE
-        cp.set_cur_data_seg(0, curseg.data_segno[0], curseg.data_blkoff[0]); // HOT_DATA
-        cp.set_cur_data_seg(1, curseg.data_segno[1], curseg.data_blkoff[1]); // WARM_DATA
-        cp.set_cur_data_seg(2, curseg.data_segno[2], curseg.data_blkoff[2]); // COLD_DATA
+        cp.set_cur_node_seg(0, curseg.node_segno[0], curseg.node_blkoff[0]);
+        cp.set_cur_node_seg(1, curseg.node_segno[1], curseg.node_blkoff[1]);
+        cp.set_cur_node_seg(2, curseg.node_segno[2], curseg.node_blkoff[2]);
+        cp.set_cur_data_seg(0, curseg.data_segno[0], curseg.data_blkoff[0]);
+        cp.set_cur_data_seg(1, curseg.data_segno[1], curseg.data_blkoff[1]);
+        cp.set_cur_data_seg(2, curseg.data_segno[2], curseg.data_blkoff[2]);
 
-        let cp_header = cp.build();
-
-        // 写 pack 0
-        let cp0_base = self.layout.cp_blkaddr;
-        self.write_block_at(cp0_base, &cp_header)?;
-        // compact summary 块 (块 1 + cp_payload)
-        let compact_summary = self.build_compact_summary();
-        self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
-        // node summary 块 (块 2..5 + cp_payload)
-        for i in 0..3 {
-            let sum_blk = self.ssa.build_curseg_summary(
-                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
-                true,
-            );
-            self.write_block_at(cp0_base + 2 + cp_payload + i as u32, &sum_blk)?;
-        }
-        // cp footer (块 5 + cp_payload, 复用 header 内容)
-        self.write_block_at(cp0_base + 5 + cp_payload, &cp_header)?;
-
-        // 写 pack 1 (cp_blkaddr + blocks_per_seg)
-        let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
-        self.write_block_at(cp1_base, &cp_header)?;
-        self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
-        for i in 0..3 {
-            let sum_blk = self.ssa.build_curseg_summary(
-                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
-                true,
-            );
-            self.write_block_at(cp1_base + 2 + cp_payload + i as u32, &sum_blk)?;
-        }
-        self.write_block_at(cp1_base + 5 + cp_payload, &cp_header)?;
-
-        Ok(())
+        cp.build()
     }
 
     /// 构建 compact summary 块 (NAT journal + SIT journal + data summaries)。
+    ///
+    /// NAT journal 条目布局 (与读取侧 load_nat_journal 一致):
+    /// nid(4) + version(1) + ino(4) + block_addr(4) = 13 字节。
     fn build_compact_summary(&self) -> Vec<u8> {
-        // NAT journal: 收集所有已分配的 NAT 条目
-        let nat_entries: Vec<(u32, u32)> = (0..self.nat.next_free_nid())
-            .filter_map(|nid| {
-                // 从 nat manager 取 block_addr (通过 set_entry 写入的)
-                // 这里简化: 直接构造 (nid, block_addr) 对
-                let _ = nid;
-                None
-            })
-            .collect();
-        let _ = nat_entries;
-
-        // 简化: 生成空 journal + 当前 segment 的 data summaries
         let mut buf = vec![0u8; F2FS_BLKSIZE];
-        // NAT journal 头 (n_nats = 0)
-        buf[0..2].copy_from_slice(&0u16.to_le_bytes());
-        // SIT journal 头 (偏移 SUM_JOURNAL_SIZE)
+
+        // 1. NAT journal (前 SUM_JOURNAL_SIZE 字节): count(2) + 条目
+        let journal = self.nat.journal_entries();
+        let max_nats = (SUM_JOURNAL_SIZE - 2) / NAT_JOURNAL_ENTRY_SIZE;
+        let n_nats = journal.len().min(max_nats) as u16;
+        buf[0..2].copy_from_slice(&n_nats.to_le_bytes());
+        for (i, &(nid, ino, block_addr)) in journal.iter().take(max_nats).enumerate() {
+            let off = 2 + i * NAT_JOURNAL_ENTRY_SIZE;
+            buf[off..off + 4].copy_from_slice(&nid.to_le_bytes());
+            buf[off + 4] = 0; // version
+            buf[off + 5..off + 9].copy_from_slice(&ino.to_le_bytes());
+            buf[off + 9..off + 13].copy_from_slice(&block_addr.to_le_bytes());
+        }
+
+        // 2. SIT journal (偏移 SUM_JOURNAL_SIZE, 长度 SUM_JOURNAL_SIZE): count(2) + 条目
+        //    新建镜像不向 SIT journal 写增量, count=0 (SIT 状态由 SIT 区域 + 版本 bitmap 承载)
         buf[SUM_JOURNAL_SIZE..SUM_JOURNAL_SIZE + 2].copy_from_slice(&0u16.to_le_bytes());
-        // footer
+
+        // 3. footer: summary 类型 + CRC32
         let footer = F2FS_BLKSIZE - 5;
-        buf[footer] = 0; // SUM_TYPE_DATA
+        buf[footer] = 0; // SUM_TYPE_DATA (compact summary 块用 DATA 类型)
         let crc = crate::f2fs::write::crc::crc32(&buf[..=footer]);
         buf[footer + 1..footer + 5].copy_from_slice(&crc.to_le_bytes());
         buf

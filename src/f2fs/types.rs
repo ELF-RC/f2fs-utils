@@ -47,6 +47,7 @@ pub struct Superblock {
     pub main_blkaddr: u32,
     pub log_blocks_per_seg: u32,
     pub segment_count_nat: u32,
+    pub cp_payload: u32,
 }
 
 impl Superblock {
@@ -73,6 +74,9 @@ impl Superblock {
         cur.set_position(SB_OFF_SEGMENT_COUNT_NAT as u64);
         let segment_count_nat = cur.read_u32::<LittleEndian>()?;
 
+        cur.set_position(SB_OFF_CP_PAYLOAD as u64);
+        let cp_payload = cur.read_u32::<LittleEndian>()?;
+
         cur.set_position(SB_OFF_SEGMENT0_BLKADDR as u64);
         let segment0_blkaddr = cur.read_u32::<LittleEndian>()?;
         let cp_blkaddr = cur.read_u32::<LittleEndian>()?;
@@ -93,6 +97,7 @@ impl Superblock {
             main_blkaddr,
             log_blocks_per_seg,
             segment_count_nat,
+            cp_payload,
         })
     }
 

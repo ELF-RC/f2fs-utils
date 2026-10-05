@@ -45,17 +45,22 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         let nat_blocks_per_copy = (superblock.segment_count_nat / 2).saturating_mul(blocks_per_seg);
 
         // 选择有效的 checkpoint pack (版本号较大者)
-        let cp_primary = read_block_raw(&file, Block(superblock.cp_blkaddr))?;
-        let cp_secondary = read_block_raw(&file, Block(superblock.cp_blkaddr + blocks_per_seg))?;
+        let cp0_base = superblock.cp_blkaddr;
+        let cp1_base = superblock.cp_blkaddr + blocks_per_seg;
+        let cp_primary = read_block_raw(&file, Block(cp0_base))?;
+        let cp_secondary = read_block_raw(&file, Block(cp1_base))?;
         let cp_primary_ver = read_le_u64(&cp_primary, CP_OFF_CHECKPOINT_VER)?;
         let cp_secondary_ver = read_le_u64(&cp_secondary, CP_OFF_CHECKPOINT_VER)?;
-        let active_cp = if cp_secondary_ver > cp_primary_ver {
-            cp_secondary
+        let (active_cp, active_base) = if cp_secondary_ver > cp_primary_ver {
+            (cp_secondary, cp1_base)
         } else {
-            cp_primary
+            (cp_primary, cp0_base)
         };
 
-        let nat_journal = load_nat_journal(&active_cp)?;
+        // compact summary 块位于 active pack 的 1 + cp_payload 处
+        let compact_summary =
+            read_block_raw(&file, Block(active_base + 1 + superblock.cp_payload))?;
+        let nat_journal = load_nat_journal(&active_cp, &compact_summary)?;
 
         Ok(Self {
             file,
@@ -186,37 +191,31 @@ fn read_le_u32(data: &[u8], offset: usize) -> Result<u32> {
     ]))
 }
 
-/// 从 checkpoint 头部加载 NAT journal。
-fn load_nat_journal(cp: &[u8]) -> Result<HashMap<Nid, NatEntry>> {
+/// 从 checkpoint 头部 (取 flags) 与 compact summary 块 (取 journal) 加载 NAT journal。
+///
+/// compact summary 块布局: NAT journal 在前 SUM_JOURNAL_SIZE 字节,
+/// 格式为 count(2) + 条目 (每条 nid(4)+version(1)+ino(4)+block_addr(4) = 13)。
+fn load_nat_journal(cp_header: &[u8], compact_summary: &[u8]) -> Result<HashMap<Nid, NatEntry>> {
     let mut journal = HashMap::new();
 
-    let flags = read_le_u32(cp, CP_OFF_FLAGS)?;
+    let flags = read_le_u32(cp_header, CP_OFF_FLAGS)?;
     if flags & CP_COMPACT_SUM_FLAG == 0 {
         return Ok(journal);
     }
 
-    let total_block_count = read_le_u32(cp, CP_OFF_CP_PACK_TOTAL_BLOCK_COUNT)?;
-    let pack_start_sum = read_le_u32(cp, CP_OFF_CP_PACK_START_SUM)?;
-    if pack_start_sum == 0 || pack_start_sum >= total_block_count {
+    if compact_summary.len() < SUM_JOURNAL_SIZE {
         return Ok(journal);
     }
 
-    // compact summary 的 NAT journal 区位于块首部前 SUM_JOURNAL_SIZE 字节。
-    // 这里 cp 视为 compact summary 块的缓冲 (由调用方定位)。
-    // 为简化: 直接在 cp 缓冲上解析前 SUM_JOURNAL_SIZE 字节。
-    if cp.len() < SUM_JOURNAL_SIZE {
-        return Ok(journal);
-    }
-
-    let nat_count = u16::from_le_bytes([cp[0], cp[1]]) as usize;
+    let nat_count = u16::from_le_bytes([compact_summary[0], compact_summary[1]]) as usize;
     for i in 0..nat_count {
         let off = 2 + i * NAT_JOURNAL_ENTRY_SIZE;
         if off + NAT_JOURNAL_ENTRY_SIZE > SUM_JOURNAL_SIZE {
             break;
         }
-        let nid = read_le_u32(cp, off)?;
+        let nid = read_le_u32(compact_summary, off)?;
         // version(1) @ off+4, ino(4) @ off+5, block_addr(4) @ off+9
-        let block_addr = read_le_u32(cp, off + 9)?;
+        let block_addr = read_le_u32(compact_summary, off + 9)?;
         if block_addr == 0 {
             continue;
         }

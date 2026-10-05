@@ -20,6 +20,7 @@ pub const SB_OFF_NAT_BLKADDR: usize = 84;
 pub const SB_OFF_SSA_BLKADDR: usize = 88;
 pub const SB_OFF_MAIN_BLKADDR: usize = 92;
 pub const SB_OFF_SEGMENT_COUNT_NAT: usize = 60;
+pub const SB_OFF_CP_PAYLOAD: usize = 1664;
 
 // 块地址哨兵
 pub const NULL_ADDR: u32 = 0;
