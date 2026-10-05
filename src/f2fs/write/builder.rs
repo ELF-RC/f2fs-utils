@@ -690,6 +690,9 @@ impl F2fsBuilder {
         let cp_payload = self.layout.cp_payload;
 
         // cp_pack_total = 1 (header) + cp_payload + 1 (compact summary) + 1 (footer)
+        // 内核 validate_checkpoint 读 footer @ cp_blkaddr + cp_pack_total - 1,
+        // 要求 footer.checkpoint_ver == header.checkpoint_ver (footer = header 副本)。
+        // compact summary 写在 header+payload 之后、footer 之前。
         let cp_pack_total = 3 + cp_payload;
 
         // compact summary 两份共用 (NAT/SIT journal 内容一致)
@@ -700,14 +703,14 @@ impl F2fsBuilder {
         let cp0_base = self.layout.cp_blkaddr;
         self.write_block_at(cp0_base, &cp0_header)?;
         self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
-        self.write_block_at(cp0_base + 2 + cp_payload, &cp0_header)?;
+        self.write_block_at(cp0_base + cp_pack_total - 1, &cp0_header)?;
 
         // 写 pack 1 (ver=0, 旧): 内容一致仅版本号不同
         let cp1_header = self.build_cp_header(0, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
         let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
         self.write_block_at(cp1_base, &cp1_header)?;
         self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
-        self.write_block_at(cp1_base + 2 + cp_payload, &cp1_header)?;
+        self.write_block_at(cp1_base + cp_pack_total - 1, &cp1_header)?;
 
         Ok(())
     }
