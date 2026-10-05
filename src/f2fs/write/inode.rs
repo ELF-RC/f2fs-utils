@@ -5,7 +5,9 @@ use crate::f2fs::consts::{
     F2FS_INLINE_DATA, F2FS_INLINE_DENTRY, F2FS_INLINE_XATTR, F2FS_NAME_LEN,
     F2FS_XATTR_INDEX_SECURITY, NODE_FOOTER_SIZE, S_IFDIR, S_IFLNK, S_IFREG,
 };
-use crate::f2fs::write::consts::{DEFAULT_INLINE_XATTR_SIZE, EXTRA_ISIZE, NIDS_PER_BLOCK_W};
+use crate::f2fs::write::consts::{
+    COMPRESS_LZ4, DEFAULT_INLINE_XATTR_SIZE, EXTRA_ISIZE, NIDS_PER_BLOCK_W,
+};
 use crate::f2fs::write::crc::inode_checksum;
 use crate::f2fs::write::types::{FileType, NodeFooter};
 
@@ -79,6 +81,14 @@ pub struct InodeBuilder {
     inline_xattrs: Vec<InlineXattrEntry>,
     /// inline 数据 (符号链接目标或小文件内容, 不占独立数据块)。
     inline_data: Option<Vec<u8>>,
+    /// 压缩算法 (COMPRESS_LZ4 等)。
+    compress_algorithm: u8,
+    /// log2(压缩簇块数)。
+    log_cluster_size: u8,
+    /// 压缩标志位 (i_compress_flag, u16)。
+    compress_flag: u16,
+    /// 压缩后占的物理块总数 (i_compr_blocks)。
+    compr_blocks: u32,
 }
 
 impl Default for InodeBuilder {
@@ -111,6 +121,10 @@ impl Default for InodeBuilder {
             projid: 0,
             inline_xattrs: Vec::new(),
             inline_data: None,
+            compress_algorithm: COMPRESS_LZ4,
+            log_cluster_size: 2,
+            compress_flag: 0,
+            compr_blocks: 0,
         }
     }
 }
@@ -228,6 +242,15 @@ impl InodeBuilder {
         self
     }
 
+    pub fn with_compression(mut self, algo: u8, log_cluster_size: u8, compr_blocks: u32) -> Self {
+        self.compress_algorithm = algo;
+        self.log_cluster_size = log_cluster_size;
+        self.compr_blocks = compr_blocks;
+        self.compress_flag = 1; // F2FS Compress_File_Flag
+        self.has_extra_attr = true;
+        self
+    }
+
     pub fn with_selinux_context(mut self, context: &str) -> Self {
         self.has_extra_attr = true;
         self.inline_flags |= F2FS_EXTRA_ATTR;
@@ -281,6 +304,11 @@ impl InodeBuilder {
             // i_inode_checksum @ 368..372, 稍后填
             buf[372..380].copy_from_slice(&self.crtime.to_le_bytes());
             buf[380..384].copy_from_slice(&self.crtime_nsec.to_le_bytes());
+            // 压缩字段 (384..396)
+            buf[384..392].copy_from_slice(&u64::from(self.compr_blocks).to_le_bytes());
+            buf[392] = self.compress_algorithm;
+            buf[393] = self.log_cluster_size;
+            buf[394..396].copy_from_slice(&self.compress_flag.to_le_bytes());
         }
 
         let addr_offset = if self.has_extra_attr { 396 } else { 360 };

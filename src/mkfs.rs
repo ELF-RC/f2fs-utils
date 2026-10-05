@@ -27,6 +27,14 @@ pub struct MkfsF2fsConfig {
     pub timestamp: Option<u64>,
     /// 只读镜像 (设为 true 时启用 RO 特性)。
     pub readonly: bool,
+    /// 构建完成后转为 Android sparse 镜像。
+    pub sparse: bool,
+    /// 启用文件压缩 (F2FS_FEATURE_COMPRESSION)。
+    pub compression: bool,
+    /// 压缩算法: "lz4" (默认)。
+    pub compress_algo: String,
+    /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB。
+    pub cluster_log: u8,
 }
 
 /// 一站式构建入口。
@@ -37,6 +45,15 @@ pub fn mkfs(cfg: MkfsF2fsConfig) -> Result<()> {
         // RO 特性: 简化为追加 RO bit (复刻 -O ro)
         features.bits |= 0x4000;
     }
+    if cfg.compression {
+        features.bits |= crate::f2fs::write::consts::F2FS_FEATURE_COMPRESSION;
+    }
+
+    let compress_algo = match cfg.compress_algo.as_str() {
+        "lzo" => crate::f2fs::write::consts::COMPRESS_LZO,
+        "zstd" => crate::f2fs::write::consts::COMPRESS_ZSTD,
+        _ => crate::f2fs::write::consts::COMPRESS_LZ4,
+    };
 
     let inner = MkfsConfig {
         source_dir: cfg.source_dir,
@@ -48,6 +65,10 @@ pub fn mkfs(cfg: MkfsF2fsConfig) -> Result<()> {
         file_contexts: cfg.file_contexts,
         timestamp: cfg.timestamp,
         features: Some(features),
+        sparse: cfg.sparse,
+        compression: cfg.compression,
+        compress_algo,
+        cluster_log: cfg.cluster_log,
     };
 
     build_f2fs_image(inner).map_err(|e| anyhow!(e))

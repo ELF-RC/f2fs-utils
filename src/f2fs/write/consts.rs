@@ -87,3 +87,18 @@ pub const F2FS_FEATURE_INLINE_DENTRY: u32 = 0x0000_0080;
 pub const F2FS_FEATURE_SB_CHKSUM: u32 = 0x0000_0200;
 pub const F2FS_FEATURE_CASEFOLD: u32 = 0x0000_1000;
 pub const F2FS_FEATURE_COMPRESSION: u32 = 0x0000_2000;
+
+// 压缩算法 (inode i_compress_algorithm)
+pub const COMPRESS_LZ4: u8 = 0;
+pub const COMPRESS_LZO: u8 = 1;
+pub const COMPRESS_ZSTD: u8 = 2;
+
+// inode 压缩字段偏移 (extra_attr 区内, 相对 inode 起始)
+// i_compr_blocks 是 __le64 (8 字节)
+pub const INODE_OFF_COMPR_BLOCKS: usize = 384;
+pub const INODE_OFF_COMPRESS_ALGO: usize = 392;
+pub const INODE_OFF_LOG_CLUSTER_SIZE: usize = 393;
+pub const INODE_OFF_COMPRESS_FLAG: usize = 394;
+
+// 压缩簇头: clen(4) + chksum(4) + reserved(16) = 24 字节
+pub const COMPRESS_HEADER_SIZE: usize = 24;

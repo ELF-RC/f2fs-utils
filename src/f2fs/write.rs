@@ -21,6 +21,7 @@ pub mod inode;
 pub mod nat;
 pub mod segment;
 pub mod sit;
+pub mod sparse;
 pub mod ssa;
 pub mod superblock;
 pub mod types;
@@ -33,6 +34,7 @@ pub use inode::{DirectNodeBuilder, IndirectNodeBuilder, InlineXattrEntry, InodeB
 pub use nat::NatManager;
 pub use segment::SegmentAllocator;
 pub use sit::SitManager;
+pub use sparse::convert_file as convert_to_sparse;
 pub use ssa::SsaManager;
 pub use superblock::SuperblockBuilder;
 pub use types::{F2fsFeatures, FileType, SegType, SuperblockLayout};

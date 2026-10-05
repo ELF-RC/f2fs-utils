@@ -9,13 +9,13 @@
 //! 5. 写入双副本 checkpoint (含 compact summary)
 //! 6. 写入超级块
 
-use crate::f2fs::consts::{F2FS_BLKSIZE, F2FS_ROOT_INO};
+use crate::f2fs::consts::{COMPRESS_ADDR, F2FS_BLKSIZE, F2FS_ROOT_INO, NULL_ADDR};
 use crate::f2fs::types::Nid;
 use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
-    CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, CURSEG_COLD_NODE, CURSEG_HOT_NODE, CURSEG_WARM_NODE,
-    DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
+    COMPRESS_HEADER_SIZE, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, CURSEG_COLD_NODE, CURSEG_HOT_NODE,
+    CURSEG_WARM_NODE, DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
@@ -52,6 +52,14 @@ pub struct MkfsConfig {
     pub timestamp: Option<u64>,
     /// 特性标志 (None 用默认)。
     pub features: Option<F2fsFeatures>,
+    /// 构建完成后转为 Android sparse 镜像。
+    pub sparse: bool,
+    /// 启用文件压缩 (配合 features 的 COMPRESSION 位)。
+    pub compression: bool,
+    /// 压缩算法: COMPRESS_LZ4 等。
+    pub compress_algo: u8,
+    /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB。
+    pub cluster_log: u8,
 }
 
 /// 待写入的目录 (延迟写 inode: 子项装载完毕后才知道 links/size)。
@@ -98,6 +106,12 @@ pub struct F2fsBuilder {
     valid_node_count: u32,
     /// 有效 inode 计数。
     valid_inode_count: u32,
+    /// 是否启用文件压缩。
+    compression: bool,
+    /// 压缩算法 (COMPRESS_LZ4 等)。
+    compress_algo: u8,
+    /// log2(压缩簇块数)。
+    cluster_log: u8,
 }
 
 impl F2fsBuilder {
@@ -139,6 +153,10 @@ impl F2fsBuilder {
             .as_ref()
             .and_then(|p| SelinuxContexts::from_file(p).ok());
 
+        let compression = cfg.compression;
+        let compress_algo = cfg.compress_algo;
+        let cluster_log = cfg.cluster_log;
+
         Ok(Self {
             cfg,
             writer: file,
@@ -158,6 +176,9 @@ impl F2fsBuilder {
             valid_block_count: 0,
             valid_node_count: 0,
             valid_inode_count: 0,
+            compression,
+            compress_algo,
+            cluster_log,
         })
     }
 
@@ -355,6 +376,18 @@ impl F2fsBuilder {
                         .with_pino(parent_nid)
                         .with_name(name.as_bytes())
                         .with_inline_data(data)
+                } else if self.compression {
+                    let (data_addrs, compr_blocks) = self.write_file_data_compressed(&data, nid)?;
+                    let blocks = u64::from(compr_blocks) + 1;
+                    InodeBuilder::new_file((mode & 0o7777) as u16, uid, gid)
+                        .with_links(1)
+                        .with_size(file_size)
+                        .with_blocks(blocks)
+                        .with_timestamp_nsecs(mtime.0, mtime.1)
+                        .with_pino(parent_nid)
+                        .with_name(name.as_bytes())
+                        .with_addrs(data_addrs)
+                        .with_compression(self.compress_algo, self.cluster_log, compr_blocks)
                 } else {
                     let data_addrs = self.write_file_data(&data, nid)?;
                     let blocks = data_addrs.len() as u64 + 1;
@@ -421,6 +454,76 @@ impl F2fsBuilder {
             self.valid_block_count += 1;
         }
         Ok(addrs)
+    }
+
+    /// 写入压缩文件数据块, 返回 (addr 数组, 物理块计数)。
+    ///
+    /// F2FS 压缩格式 (与读取侧 file.rs::decompress_cluster 对称):
+    /// - 簇 = 2^cluster_log 个逻辑块 (默认 4 块 = 16KB)
+    /// - LZ4 压缩, 24 字节头 (clen(4)+chksum(4)+reserved(16)) + clen 字节载荷
+    /// - 载荷切成 N 个 4KB 物理块
+    /// - addr 数组: [COMPRESS_ADDR, phys0..physN, 0...] 填充至簇块数
+    /// - 压缩后 >= 原始大小则存为普通块 (不压缩)
+    fn write_file_data_compressed(&mut self, data: &[u8], nid: u32) -> Result<(Vec<u32>, u32)> {
+        let cluster_blks = 1usize << self.cluster_log;
+        let cluster_size = cluster_blks * F2FS_BLKSIZE;
+        let mut addrs = Vec::new();
+        let mut compr_blocks: u32 = 0;
+
+        for cluster_data in data.chunks(cluster_size) {
+            // 不足整簇: 补零到簇大小再压缩
+            let mut padded = cluster_data.to_vec();
+            padded.resize(cluster_size, 0);
+
+            let compressed = lz4_flex::compress(&padded);
+            let header_and_payload_len = COMPRESS_HEADER_SIZE + compressed.len();
+            let phys_blks = header_and_payload_len.div_ceil(F2FS_BLKSIZE);
+
+            // 压缩未获益 (物理块数 >= 逻辑块数): 存为普通块
+            if phys_blks >= cluster_blks {
+                for chunk in padded.chunks(F2FS_BLKSIZE).take(cluster_blks) {
+                    let blkaddr = self.segalloc.alloc_data_block(SegType::WarmData)?;
+                    self.write_block_at(blkaddr, chunk)?;
+                    self.mark_data_block(blkaddr, nid, addrs.len() as u16);
+                    addrs.push(blkaddr);
+                    self.valid_block_count += 1;
+                }
+                continue;
+            }
+
+            // 压缩获益: 构造 24B 头 + 载荷, 切成 phys_blks 个物理块
+            let clen = compressed.len() as u32;
+            let chksum = crate::f2fs::write::crc::crc32(&padded);
+            let mut payload = Vec::with_capacity(header_and_payload_len);
+            payload.extend_from_slice(&clen.to_le_bytes());
+            payload.extend_from_slice(&chksum.to_le_bytes());
+            payload.extend_from_slice(&[0u8; 16]); // reserved
+            payload.extend_from_slice(&compressed);
+
+            let mut phys_addrs = Vec::with_capacity(phys_blks);
+            for i in 0..phys_blks {
+                let blkaddr = self.segalloc.alloc_data_block(SegType::WarmData)?;
+                let mut block = vec![0u8; F2FS_BLKSIZE];
+                let start = i * F2FS_BLKSIZE;
+                let end = (start + F2FS_BLKSIZE).min(payload.len());
+                block[..end - start].copy_from_slice(&payload[start..end]);
+                self.write_block_at(blkaddr, &block)?;
+                self.mark_data_block(blkaddr, nid, addrs.len() as u16);
+                phys_addrs.push(blkaddr);
+                self.valid_block_count += 1;
+                compr_blocks += 1;
+            }
+
+            // addr 数组: [COMPRESS_ADDR, phys0..physN, 0 填充] 共 cluster_blks 槽
+            addrs.push(COMPRESS_ADDR);
+            for &pa in &phys_addrs {
+                addrs.push(pa);
+            }
+            while addrs.len() % cluster_blks != 0 {
+                addrs.push(NULL_ADDR);
+            }
+        }
+        Ok((addrs, compr_blocks))
     }
 
     /// 向当前 (最近推入的) 目录的 dentry 列表追加一条。
@@ -712,6 +815,12 @@ impl F2fsBuilder {
 
 /// 顶层入口: 构建 F2FS 镜像。
 pub fn build_f2fs_image(cfg: MkfsConfig) -> Result<()> {
+    let sparse = cfg.sparse;
+    let output_path = cfg.output_path.clone();
     let mut builder = F2fsBuilder::new(cfg)?;
-    builder.build()
+    builder.build()?;
+    if sparse {
+        crate::f2fs::write::sparse::convert_file(&output_path)?;
+    }
+    Ok(())
 }

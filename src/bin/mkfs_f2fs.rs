@@ -62,6 +62,22 @@ struct Cli {
     /// 只读镜像 (启用 RO 特性)
     #[arg(short = 'R', long)]
     readonly: bool,
+
+    /// 输出 Android sparse 镜像 (全零块合并为 `DONT_CARE`)
+    #[arg(long)]
+    sparse: bool,
+
+    /// 启用文件压缩 (`F2FS_FEATURE_COMPRESSION`)
+    #[arg(short = 'z', long)]
+    compression: bool,
+
+    /// 压缩算法 (默认 lz4)
+    #[arg(long = "compress-algo", default_value = "lz4")]
+    compress_algo: String,
+
+    /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB
+    #[arg(long = "cluster-log", default_value_t = 2)]
+    cluster_log: u8,
 }
 
 fn main() -> ExitCode {
@@ -86,6 +102,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         file_contexts: cli.file_contexts,
         timestamp: cli.timestamp,
         readonly: cli.readonly,
+        sparse: cli.sparse,
+        compression: cli.compression,
+        compress_algo: cli.compress_algo,
+        cluster_log: cli.cluster_log,
     };
     mkfs(cfg)
 }
