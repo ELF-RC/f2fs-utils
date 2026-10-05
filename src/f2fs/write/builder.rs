@@ -14,8 +14,8 @@ use crate::f2fs::types::Nid;
 use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
-    COMPRESS_HEADER_SIZE, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, CURSEG_COLD_NODE, CURSEG_HOT_NODE,
-    CURSEG_WARM_NODE, DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
+    COMPRESS_HEADER_SIZE, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, DEFAULT_BLOCKS_PER_SEGMENT,
+    MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
@@ -685,8 +685,8 @@ impl F2fsBuilder {
         let blocks_per_seg = DEFAULT_BLOCKS_PER_SEGMENT;
         let cp_payload = self.layout.cp_payload;
 
-        // cp_pack 总块数 = 1 (header) + cp_payload + 1 (compact summary) + 3 (node summaries) + 1 (footer)
-        let cp_pack_total = 6 + cp_payload;
+        // cp_pack_total = 1 (header) + cp_payload + 1 (compact summary) + 1 (footer)
+        let cp_pack_total = 3 + cp_payload;
 
         // compact summary 两份共用 (NAT/SIT journal 内容一致)
         let compact_summary = self.build_compact_summary();
@@ -696,28 +696,14 @@ impl F2fsBuilder {
         let cp0_base = self.layout.cp_blkaddr;
         self.write_block_at(cp0_base, &cp0_header)?;
         self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
-        for i in 0..3 {
-            let sum_blk = self.ssa.build_curseg_summary(
-                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
-                true,
-            );
-            self.write_block_at(cp0_base + 2 + cp_payload + i as u32, &sum_blk)?;
-        }
-        self.write_block_at(cp0_base + 5 + cp_payload, &cp0_header)?;
+        self.write_block_at(cp0_base + 2 + cp_payload, &cp0_header)?;
 
         // 写 pack 1 (ver=0, 旧): 内容一致仅版本号不同
         let cp1_header = self.build_cp_header(0, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
         let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
         self.write_block_at(cp1_base, &cp1_header)?;
         self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
-        for i in 0..3 {
-            let sum_blk = self.ssa.build_curseg_summary(
-                [CURSEG_HOT_NODE, CURSEG_WARM_NODE, CURSEG_COLD_NODE][i],
-                true,
-            );
-            self.write_block_at(cp1_base + 2 + cp_payload + i as u32, &sum_blk)?;
-        }
-        self.write_block_at(cp1_base + 5 + cp_payload, &cp1_header)?;
+        self.write_block_at(cp1_base + 2 + cp_payload, &cp1_header)?;
 
         Ok(())
     }

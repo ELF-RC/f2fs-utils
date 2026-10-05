@@ -30,10 +30,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y f2fs-tools android-sdk-libsparse-utils
+          # azure 内核不含 f2fs 模块, 装对应 extra 包才有
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
       - name: Load kernel modules
         run: |
           sudo modprobe loop || true
           sudo modprobe f2fs || true
+          # 若仍缺失, 确认并让 B/E 阶段自己报 mount 失败
+          grep -i f2fs /proc/filesystems || echo "f2fs module not available"
       - name: Show official tool versions
         run: |
           mkfs.f2fs -V 2>&1 || true
