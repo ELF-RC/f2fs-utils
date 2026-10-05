@@ -63,6 +63,9 @@ struct PendingDir {
     dentries: Vec<DentryInfo>,
     data_blkaddr: u32,
     is_root: bool,
+    /// 目录自身的修改时间 (秒), 用于重写 inode 时还原时间戳。
+    mtime_secs: u64,
+    mtime_nsecs: u32,
 }
 
 /// F2FS 镜像构建器。
@@ -76,7 +79,11 @@ pub struct F2fsBuilder {
     ssa: SsaManager,
     segalloc: SegmentAllocator,
     cp_ver: u64,
-    timestamp: u64,
+    /// 镜像构建时间 (默认当前, 或 -T 指定值); 用于根 inode 与 checkpoint。
+    mkfs_time: u64,
+    /// 固定时间戳 (仅当用户指定 -T 时); 文件 inode 全部使用该值。
+    /// None 表示用源文件实际 mtime。
+    fixed_time: Option<u64>,
     fs_config: Option<FsConfig>,
     selinux: Option<SelinuxContexts>,
     /// nid → 已写入的 inode 块地址 (用于后续更新 inode)。
@@ -94,7 +101,13 @@ pub struct F2fsBuilder {
 impl F2fsBuilder {
     pub fn new(cfg: MkfsConfig) -> Result<Self> {
         let file = File::create(&cfg.output_path)?;
-        let timestamp = cfg.timestamp.unwrap_or(0);
+        // -T 同时控制 mkfs_time 与文件时间戳 (AOSP build_image.py 行为)
+        let fixed_time = cfg.timestamp;
+        let mkfs_time = cfg.timestamp.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        });
 
         let features = cfg.features.unwrap_or_default();
         let mut sb_builder = SuperblockBuilder::new(cfg.image_size)
@@ -134,7 +147,8 @@ impl F2fsBuilder {
             ssa,
             segalloc,
             cp_ver: 1,
-            timestamp,
+            mkfs_time,
+            fixed_time,
             fs_config,
             selinux,
             inode_blocks: HashMap::new(),
@@ -191,12 +205,12 @@ impl F2fsBuilder {
         let dentry_blkaddr = self.segalloc.alloc_data_block(SegType::HotData)?;
         self.mark_data_block(dentry_blkaddr, F2FS_ROOT_INO, 0);
 
-        // 写入根 inode (mode 040755, uid/gid 0)
+        // 写入根 inode (mode 040755, uid/gid 0); 根目录时间 = 构建时间
         let root_inode = InodeBuilder::new_dir(0o755, 0, 0)
             .with_links(2)
             .with_size(F2FS_BLKSIZE as u64)
             .with_blocks(2)
-            .with_timestamp(self.timestamp)
+            .with_timestamp(self.mkfs_time)
             .with_pino(F2FS_ROOT_INO)
             .with_depth(1)
             .with_name(b"/")
@@ -228,6 +242,8 @@ impl F2fsBuilder {
             dentries: Vec::new(),
             data_blkaddr: dentry_blkaddr,
             is_root: true,
+            mtime_secs: self.mkfs_time,
+            mtime_nsecs: 0,
         });
 
         Ok(())
@@ -253,6 +269,8 @@ impl F2fsBuilder {
             let meta = entry
                 .metadata()
                 .with_context(|| format!("failed to stat {}", entry_path.display()))?;
+            // 时间戳: -T 指定时全部用固定值, 否则读源文件 mtime
+            let mtime = self.file_timestamp(&meta);
 
             if meta.is_dir() {
                 let nid = self.nat.alloc_nid().0;
@@ -270,7 +288,7 @@ impl F2fsBuilder {
                     .with_links(2)
                     .with_size(F2FS_BLKSIZE as u64)
                     .with_blocks(2)
-                    .with_timestamp(self.timestamp)
+                    .with_timestamp_nsecs(mtime.0, mtime.1)
                     .with_pino(parent_nid)
                     .with_depth(1)
                     .with_name(name.as_bytes())
@@ -296,6 +314,8 @@ impl F2fsBuilder {
                     dentries: Vec::new(),
                     data_blkaddr: dentry_blkaddr,
                     is_root: false,
+                    mtime_secs: mtime.0,
+                    mtime_nsecs: mtime.1,
                 });
 
                 // 递归
@@ -322,7 +342,7 @@ impl F2fsBuilder {
                     .with_links(1)
                     .with_size(file_size)
                     .with_blocks(blocks)
-                    .with_timestamp(self.timestamp)
+                    .with_timestamp_nsecs(mtime.0, mtime.1)
                     .with_pino(parent_nid)
                     .with_name(name.as_bytes())
                     .with_addrs(data_addrs);
@@ -344,7 +364,7 @@ impl F2fsBuilder {
 
                 let inode = InodeBuilder::new_symlink(uid, gid)
                     .with_links(1)
-                    .with_timestamp(self.timestamp)
+                    .with_timestamp_nsecs(mtime.0, mtime.1)
                     .with_pino(parent_nid)
                     .with_name(name.as_bytes())
                     .with_symlink_target(&target_str);
@@ -420,7 +440,7 @@ impl F2fsBuilder {
                 .with_links(links)
                 .with_size(F2FS_BLKSIZE as u64)
                 .with_blocks(2)
-                .with_timestamp(self.timestamp)
+                .with_timestamp_nsecs(dir.mtime_secs, dir.mtime_nsecs)
                 .with_pino(dir.pino)
                 .with_depth(1)
                 .with_name(if dir.is_root { b"/" } else { &dir.name })
@@ -456,6 +476,23 @@ impl F2fsBuilder {
         } else {
             let mode = if is_dir { 0o755 } else { 0o644 };
             (0, 0, mode)
+        }
+    }
+
+    /// 取一条目目的时间戳: -T 指定时全部用固定值, 否则读源文件 mtime (含纳秒)。
+    fn file_timestamp(&self, meta: &std::fs::Metadata) -> (u64, u32) {
+        if let Some(fixed) = self.fixed_time {
+            return (fixed, 0);
+        }
+        match meta.modified() {
+            Ok(time) => {
+                let dur = time
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                (dur.as_secs(), dur.subsec_nanos())
+            }
+            // 取不到 mtime 时退回构建时间
+            Err(_) => (self.mkfs_time, 0),
         }
     }
 

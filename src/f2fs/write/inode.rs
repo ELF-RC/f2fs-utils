@@ -173,6 +173,19 @@ impl InodeBuilder {
         self
     }
 
+    /// 设置秒 + 纳秒, 四个时间字段统一 (保留源文件亚秒精度)。
+    pub fn with_timestamp_nsecs(mut self, secs: u64, nsecs: u32) -> Self {
+        self.atime = secs;
+        self.atime_nsec = nsecs;
+        self.ctime = secs;
+        self.ctime_nsec = nsecs;
+        self.mtime = secs;
+        self.mtime_nsec = nsecs;
+        self.crtime = secs;
+        self.crtime_nsec = nsecs;
+        self
+    }
+
     pub fn with_pino(mut self, pino: u32) -> Self {
         self.pino = pino;
         self
