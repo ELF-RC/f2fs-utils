@@ -215,13 +215,12 @@ pub struct F2fsFeatures {
 
 impl Default for F2fsFeatures {
     fn default() -> Self {
-        // AOSP mkfs.f2fs 默认开启的特性
+        // AOSP mkfs.f2fs -g android 默认特性 (sb feature 位)。
+        // inline_data / inline_xattr / inline_dentry 是 inode i_inline 标志,
+        // 不是 sb feature, 由 InodeBuilder 按需置位。
         Self {
             bits: F2FS_FEATURE_ENCRYPT
                 | F2FS_FEATURE_EXTRA_ATTR
-                | F2FS_FEATURE_INLINE_XATTR
-                | F2FS_FEATURE_INLINE_DATA
-                | F2FS_FEATURE_INLINE_DENTRY
                 | F2FS_FEATURE_SB_CHKSUM,
         }
     }
