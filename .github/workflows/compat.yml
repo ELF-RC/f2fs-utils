@@ -1,0 +1,194 @@
+name: compat
+
+# 用安卓官方标准工具端到端验证 mkfs/extract 与官方一致性。
+# 五阶段独立报状态 (continue-on-error), 最后 gate 步骤按任一失败标红。
+# 失败时上传镜像+日志 artifact 供事后分析。
+# 当前预期:各阶段因已知 bug FAIL,修一个翻一行,全绿为回归基线。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  IMG_SIZE: 67108864        # 64 MiB
+  MOUNT_POINT: /system
+
+jobs:
+  compat:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build our tools
+        run: cargo build --release
+      - name: Install official tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y f2fs-tools android-sdk-libsparse-utils
+      - name: Load kernel modules
+        run: |
+          sudo modprobe loop || true
+          sudo modprobe f2fs || true
+      - name: Show official tool versions
+        run: |
+          mkfs.f2fs -V 2>&1 || true
+          sload.f2fs -V 2>&1 || true
+          fsck.f2fs -V 2>&1 || true
+          simg2img 2>&1 | head -1 || true
+
+      # ── 夹具目录树 + 校验基准 ──────────────────────────────
+      - name: Generate fixture
+        run: |
+          set -e
+          FX=$GITHUB_WORKSPACE/fixture
+          mkdir -p $FX/empty
+          mkdir -p $FX/deep/a/b/c/d/e
+          echo "deep" > $FX/deep/a/b/c/d/e/deepfile.txt
+          echo "12345678" > $FX/small.txt                       # 8B → inline_data
+          head -c 8388608 /dev/urandom > $FX/large.bin          # 8MiB → 块分配+间接链
+          yes A | head -c 8388608 > $FX/compressible.bin         # 8MiB → 压缩簇
+          ln -s small.txt $FX/link                               # symlink
+          echo "multi" > "$FX/中文文件.txt"                       # 多字节名
+          ( cd $FX && find . -type f -exec sha256sum {} \; | sort ) > $GITHUB_WORKSPACE/fixture.sha256
+          cat $GITHUB_WORKSPACE/fixture.sha256
+
+      - name: Write fs_config / file_contexts
+        run: |
+          printf '%s\n' \
+            '/system 0 2000 2000 755' \
+            '/system(/.*) 0 2000 2000 755' \
+            > $GITHUB_WORKSPACE/fs_config
+          printf '%s\n' \
+            '/system u:object_r:system_file:s0' \
+            '/system(/.*) u:object_r:system_file:s0' \
+            > $GITHUB_WORKSPACE/file_contexts
+
+      # ── 阶段 A:自合成 → 官方 fsck ──────────────────────────
+      - name: A - our mkfs → official fsck
+        id: stageA
+        continue-on-error: true
+        run: |
+          set -e
+          ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+            -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
+          fsck.f2fs -a A.raw > A_fsck.log 2>&1
+          echo "fsck exit $?"
+      - if: always() && steps.stageA.outcome != 'success'
+        run: cat A_mkfs.log A_fsck.log 2>/dev/null; true
+
+      # ── 阶段 B:自合成 → 内核挂载比对 ────────────────────────
+      - name: B - our mkfs → kernel mount → diff
+        id: stageB
+        continue-on-error: true
+        run: |
+          set -e
+          LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/A.raw)
+          sudo mkdir -p /mnt /mnt_check
+          sudo mount -t f2fs $LOOP /mnt 2>>B_mount.log
+          sudo cp -a /mnt/. /mnt_check/
+          sudo umount /mnt
+          sudo losetup -d $LOOP
+          # lost+found 是内核按 LOST_FOUND feature 创建的, 不计入比对
+          sudo rm -rf /mnt_check/lost+found 2>/dev/null || true
+          diff -r fixture /mnt_check > B_diff.log 2>&1 || true
+          ( cd /mnt_check && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > B_sha.log 2>&1 || true
+          test ! -s B_diff.log && grep -q ': OK' B_sha.log
+      - if: always() && steps.stageB.outcome != 'success'
+        run: cat B_mount.log B_diff.log B_sha.log 2>/dev/null; true
+
+      # ── 阶段 C:官方合成 → 自解压 ──────────────────────────
+      - name: C - official mkfs+sload → our extract
+        id: stageC
+        continue-on-error: true
+        run: |
+          set -e
+          truncate -s $IMG_SIZE $GITHUB_WORKSPACE/C.raw
+          mkfs.f2fs $GITHUB_WORKSPACE/C.raw > C_mkfs.log 2>&1
+          sload.f2fs -f fixture -t $MOUNT_POINT \
+            -C $GITHUB_WORKSPACE/fs_config \
+            -S $GITHUB_WORKSPACE/file_contexts \
+            $GITHUB_WORKSPACE/C.raw > C_sload.log 2>&1
+          ./target/release/extract_f2fs -i $GITHUB_WORKSPACE/C.raw -o C_out > C_extract.log 2>&1
+          rm -rf C_out/lost+found 2>/dev/null || true
+          diff -r fixture C_out > C_diff.log 2>&1 || true
+          ( cd C_out && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > C_sha.log 2>&1 || true
+          test ! -s C_diff.log && grep -q ': OK' C_sha.log
+      - if: always() && steps.stageC.outcome != 'success'
+        run: cat C_mkfs.log C_sload.log C_extract.log C_diff.log C_sha.log 2>/dev/null; true
+
+      # ── 阶段 D:自合成 sparse → 官方解 sparse + fsck ─────────
+      - name: D - our sparse → official simg2img + fsck
+        id: stageD
+        continue-on-error: true
+        run: |
+          set -e
+          ./target/release/mkfs_f2fs --sparse -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+            -o $GITHUB_WORKSPACE/D.sparse > D_mkfs.log 2>&1
+          simg2img $GITHUB_WORKSPACE/D.sparse $GITHUB_WORKSPACE/D.raw > D_simg.log 2>&1
+          fsck.f2fs -a $GITHUB_WORKSPACE/D.raw > D_fsck.log 2>&1
+          echo "fsck exit $?"
+      - if: always() && steps.stageD.outcome != 'success'
+        run: cat D_mkfs.log D_simg.log D_fsck.log 2>/dev/null; true
+
+      # ── 阶段 E:自合成压缩 → 内核挂载读回 ──────────────────
+      - name: E - our compressed mkfs → kernel mount → sha256
+        id: stageE
+        continue-on-error: true
+        run: |
+          set -e
+          ./target/release/mkfs_f2fs -z -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+            -o $GITHUB_WORKSPACE/E.raw > E_mkfs.log 2>&1
+          LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/E.raw)
+          sudo mkdir -p /mnt /mnt_check_e
+          sudo mount -t f2fs $LOOP /mnt 2>>E_mount.log
+          sudo cp -a /mnt/. /mnt_check_e/
+          sudo umount /mnt
+          sudo losetup -d $LOOP
+          sudo rm -rf /mnt_check_e/lost+found 2>/dev/null || true
+          ( cd /mnt_check_e && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > E_sha.log 2>&1 || true
+          grep -q ': OK' E_sha.log
+      - if: always() && steps.stageE.outcome != 'success'
+        run: cat E_mkfs.log E_mount.log E_sha.log 2>/dev/null; true
+
+      # ── 状态聚合 + 门控 + artifact ──────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Compat Results"
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| A (our mkfs → official fsck) | ${{ steps.stageA.outcome }} |"
+            echo "| B (our mkfs → kernel mount → diff) | ${{ steps.stageB.outcome }} |"
+            echo "| C (official mkfs+sload → our extract) | ${{ steps.stageC.outcome }} |"
+            echo "| D (our sparse → official simg2img+fsck) | ${{ steps.stageD.outcome }} |"
+            echo "| E (our compressed → kernel mount) | ${{ steps.stageE.outcome }} |"
+          } >> $GITHUB_STEP_SUMMARY
+      - name: Gate (fail job if any stage failed)
+        if: always()
+        run: |
+          fail=0
+          [ "${{ steps.stageA.outcome }}" = success ] || fail=1
+          [ "${{ steps.stageB.outcome }}" = success ] || fail=1
+          [ "${{ steps.stageC.outcome }}" = success ] || fail=1
+          [ "${{ steps.stageD.outcome }}" = success ] || fail=1
+          [ "${{ steps.stageE.outcome }}" = success ] || fail=1
+          if [ "$fail" = 1 ]; then
+            echo "Some compat stages failed — see summary above."
+            exit 1
+          fi
+      - name: Upload failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-failures
+          path: |
+            *.raw
+            *.sparse
+            *.log
+          if-no-files-found: ignore
