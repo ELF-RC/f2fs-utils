@@ -205,6 +205,7 @@ impl F2fsBuilder {
 
         // 4. 写入元数据区域
         self.write_nat_area()?;
+        self.finalize_curseg_sit_types();
         self.write_sit_area()?;
         self.write_ssa_area()?;
 
@@ -223,11 +224,11 @@ impl F2fsBuilder {
         // 根 inode 的 node 块: 从 HOT_NODE segment 分配
         let root_blkaddr = self.segalloc.alloc_node_block(SegType::HotNode)?;
         self.nat.init_reserved_inodes(root_blkaddr);
-        self.mark_node_block(root_blkaddr, F2FS_ROOT_INO);
+        self.mark_node_block(root_blkaddr, F2FS_ROOT_INO, SegType::HotNode);
 
         // 根目录的 dentry block: 从 HOT_DATA segment 分配
         let dentry_blkaddr = self.segalloc.alloc_data_block(SegType::HotData)?;
-        self.mark_data_block(dentry_blkaddr, F2FS_ROOT_INO, 0);
+        self.mark_data_block(dentry_blkaddr, F2FS_ROOT_INO, 0, SegType::HotData);
 
         // 写入根 inode (mode 040755, uid/gid 0); 根目录时间 = 构建时间
         let root_inode = InodeBuilder::new_dir(0o755, 0, 0)
@@ -308,11 +309,11 @@ impl F2fsBuilder {
                 let (uid, gid, mode) = self.fs_config_attrs(&child_fs_path, true);
                 let node_blkaddr = self.segalloc.alloc_node_block(SegType::HotNode)?;
                 self.nat.set_entry(Nid(nid), node_blkaddr, nid);
-                self.mark_node_block(node_blkaddr, nid);
+                self.mark_node_block(node_blkaddr, nid, SegType::HotNode);
 
                 // 目录的 dentry block
                 let dentry_blkaddr = self.segalloc.alloc_data_block(SegType::HotData)?;
-                self.mark_data_block(dentry_blkaddr, nid, 0);
+                self.mark_data_block(dentry_blkaddr, nid, 0, SegType::HotData);
 
                 // 先写一个占位 inode (links/size 待子项装载后更新)
                 let inode = InodeBuilder::new_dir((mode & 0o7777) as u16, uid, gid)
@@ -361,7 +362,7 @@ impl F2fsBuilder {
 
                 let node_blkaddr = self.segalloc.alloc_node_block(SegType::WarmNode)?;
                 self.nat.set_entry(Nid(nid), node_blkaddr, nid);
-                self.mark_node_block(node_blkaddr, nid);
+                self.mark_node_block(node_blkaddr, nid, SegType::WarmNode);
                 self.valid_node_count += 1;
                 self.valid_inode_count += 1;
                 self.valid_block_count += 1;
@@ -414,7 +415,7 @@ impl F2fsBuilder {
 
                 let node_blkaddr = self.segalloc.alloc_node_block(SegType::WarmNode)?;
                 self.nat.set_entry(Nid(nid), node_blkaddr, nid);
-                self.mark_node_block(node_blkaddr, nid);
+                self.mark_node_block(node_blkaddr, nid, SegType::WarmNode);
 
                 let inode = InodeBuilder::new_symlink(uid, gid)
                     .with_links(1)
@@ -449,7 +450,7 @@ impl F2fsBuilder {
             let mut block = vec![0u8; F2FS_BLKSIZE];
             block[..chunk.len()].copy_from_slice(chunk);
             self.write_block_at(blkaddr, &block)?;
-            self.mark_data_block(blkaddr, nid, addrs.len() as u16);
+            self.mark_data_block(blkaddr, nid, addrs.len() as u16, SegType::WarmData);
             addrs.push(blkaddr);
             self.valid_block_count += 1;
         }
@@ -484,7 +485,7 @@ impl F2fsBuilder {
                 for chunk in padded.chunks(F2FS_BLKSIZE).take(cluster_blks) {
                     let blkaddr = self.segalloc.alloc_data_block(SegType::WarmData)?;
                     self.write_block_at(blkaddr, chunk)?;
-                    self.mark_data_block(blkaddr, nid, addrs.len() as u16);
+                    self.mark_data_block(blkaddr, nid, addrs.len() as u16, SegType::WarmData);
                     addrs.push(blkaddr);
                     self.valid_block_count += 1;
                 }
@@ -508,7 +509,7 @@ impl F2fsBuilder {
                 let end = (start + F2FS_BLKSIZE).min(payload.len());
                 block[..end - start].copy_from_slice(&payload[start..end]);
                 self.write_block_at(blkaddr, &block)?;
-                self.mark_data_block(blkaddr, nid, addrs.len() as u16);
+                self.mark_data_block(blkaddr, nid, addrs.len() as u16, SegType::WarmData);
                 phys_addrs.push(blkaddr);
                 self.valid_block_count += 1;
                 compr_blocks += 1;
@@ -581,16 +582,56 @@ impl F2fsBuilder {
         Ok(())
     }
 
-    /// 标记 node 块: 更新 SIT / SSA。
-    fn mark_node_block(&mut self, blkaddr: u32, nid: u32) {
-        let _ = self.sit.mark_block_used(blkaddr, 0); // node 类型在 SIT 用 0 段类型标记
+    /// 标记 node 块: 更新 SIT / SSA。seg_type 决定 SIT vblocks 高位的 curseg 类型。
+    fn mark_node_block(&mut self, blkaddr: u32, nid: u32, seg_type: SegType) {
+        let _ = self
+            .sit
+            .mark_block_used(blkaddr, seg_type.curseg_index() as u16);
         let _ = self.ssa.set_node_summary(blkaddr, nid);
     }
 
     /// 标记 data 块: 更新 SIT / SSA。
-    fn mark_data_block(&mut self, blkaddr: u32, nid: u32, ofs_in_node: u16) {
-        let _ = self.sit.mark_block_used(blkaddr, 0);
+    fn mark_data_block(&mut self, blkaddr: u32, nid: u32, ofs_in_node: u16, seg_type: SegType) {
+        let _ = self
+            .sit
+            .mark_block_used(blkaddr, seg_type.curseg_index() as u16);
         let _ = self.ssa.set_data_summary(blkaddr, nid, ofs_in_node);
+    }
+
+    /// 为 6 个 curseg 当前段显式设 SIT type。某些 curseg 段可能未实际分配块
+    /// (如 COLD_DATA 段未被使用), 但 CP 仍指向它, fsck 要求 SIT type 与
+    /// curseg 类型一致, 否则报 "Incorrect curseg type(SIT) [0]"。
+    fn finalize_curseg_sit_types(&mut self) {
+        let ci = self.segalloc.get_curseg_info();
+        let pairs = [
+            (
+                ci.node_segno[0],
+                crate::f2fs::write::consts::CURSEG_HOT_NODE as u16,
+            ),
+            (
+                ci.node_segno[1],
+                crate::f2fs::write::consts::CURSEG_WARM_NODE as u16,
+            ),
+            (
+                ci.node_segno[2],
+                crate::f2fs::write::consts::CURSEG_COLD_NODE as u16,
+            ),
+            (
+                ci.data_segno[0],
+                crate::f2fs::write::consts::CURSEG_HOT_DATA as u16,
+            ),
+            (
+                ci.data_segno[1],
+                crate::f2fs::write::consts::CURSEG_WARM_DATA as u16,
+            ),
+            (
+                ci.data_segno[2],
+                crate::f2fs::write::consts::CURSEG_COLD_DATA as u16,
+            ),
+        ];
+        for &(segno, seg_type) in &pairs {
+            let _ = self.sit.set_seg_type(segno, seg_type);
+        }
     }
 
     /// 查询 fs_config 属性。

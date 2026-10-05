@@ -62,13 +62,13 @@ pub const CP_FASTBOOT_FLAG: u32 = 0x0000_0020;
 pub const CP_NAT_BITS_FLAG: u32 = 0x0000_0080;
 pub const CP_DISABLED_FLAG: u32 = 0x0000_1000;
 
-// current segment 类型
+// current segment 类型 (内核 enum: 0-2 data, 3-5 node)
 pub const CURSEG_HOT_DATA: usize = 0;
 pub const CURSEG_WARM_DATA: usize = 1;
 pub const CURSEG_COLD_DATA: usize = 2;
-pub const CURSEG_COLD_NODE: usize = 3;
+pub const CURSEG_HOT_NODE: usize = 3;
 pub const CURSEG_WARM_NODE: usize = 4;
-pub const CURSEG_HOT_NODE: usize = 5;
+pub const CURSEG_COLD_NODE: usize = 5;
 pub const NR_CURSEG_TYPE: usize = 6;
 
 // inode 内 i_addr 间接 nid 数
