@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -12,7 +11,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,19 +21,32 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
 
-  release:
-    needs: check
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      # Cargo 不允许 bin 名含 '.', 源码产物为 extract_f2fs,
-      # 重命名为 Android 习惯的 extract.f2fs
-      - run: cp target/release/extract_f2fs target/release/extract.f2fs
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install aarch64 cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # Cargo forbids '.' in binary names; rename to Android's extract.f2fs
+      - name: Rename artifact
+        run: cp target/${{ matrix.target }}/release/extract_f2fs target/${{ matrix.target }}/release/extract.f2fs
       - uses: actions/upload-artifact@v4
         with:
-          name: f2fs-utils
-          path: |
-            target/release/extract.f2fs
+          name: extract.f2fs-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/extract.f2fs
