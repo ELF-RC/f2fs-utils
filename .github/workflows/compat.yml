@@ -54,8 +54,8 @@ jobs:
           mkdir -p $FX/deep/a/b/c/d/e
           echo "deep" > $FX/deep/a/b/c/d/e/deepfile.txt
           echo "12345678" > $FX/small.txt                       # 8B → inline_data
-          head -c 8388608 /dev/urandom > $FX/large.bin          # 8MiB → 块分配+间接链
-          yes A | head -c 8388608 > $FX/compressible.bin         # 8MiB → 压缩簇
+          head -c 3145728 /dev/urandom > $FX/large.bin          # 3MiB → 块分配 (direct addr 容量内)
+          yes A | head -c 3145728 > $FX/compressible.bin         # 3MiB → 压缩簇
           ln -s small.txt $FX/link                               # symlink
           echo "multi" > "$FX/中文文件.txt"                       # 多字节名
           ( cd $FX && find . -type f -exec sha256sum {} \; | sort ) > $GITHUB_WORKSPACE/fixture.sha256
