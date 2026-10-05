@@ -120,9 +120,10 @@ impl SitEntry {
 
     pub fn to_bytes(&self) -> [u8; SIT_ENTRY_SIZE] {
         let mut buf = [0u8; SIT_ENTRY_SIZE];
-        buf[..64].copy_from_slice(&self.valid_map);
-        buf[64..72].copy_from_slice(&self.mtime.to_le_bytes());
-        buf[72..74].copy_from_slice(&self.vblocks.to_le_bytes());
+        // 内核 struct f2fs_sit_entry 布局: vblocks@0 + valid_map@2 + mtime@66
+        buf[..2].copy_from_slice(&self.vblocks.to_le_bytes());
+        buf[2..66].copy_from_slice(&self.valid_map);
+        buf[66..74].copy_from_slice(&self.mtime.to_le_bytes());
         buf
     }
 }
