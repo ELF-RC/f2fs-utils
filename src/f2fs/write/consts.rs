@@ -53,10 +53,11 @@ pub const SUM_TYPE_DATA: u8 = 0;
 // checkpoint 字段
 pub const CHECKPOINT_HEADER_SIZE: usize = 192;
 pub const CP_CHKSUM_OFFSET: usize = 4092;
-pub const CP_UMOUNT_FLAG: u32 = 0x0000_0010;
-pub const CP_COMPACT_SUM_FLAG_W: u32 = 0x0000_0004;
-pub const CP_NOCRC_FLAG: u32 = 0x0000_0008;
-pub const CP_TRIMMED_FLAG: u32 = 0x0000_0200;
+pub const CP_UMOUNT_FLAG: u32 = 0x0000_0001;
+pub const CP_FASTBOOT_FLAG: u32 = 0x0000_0004;
+pub const CP_COMPACT_SUM_FLAG_W: u32 = 0x0000_0008;
+pub const CP_NAT_BITS_FLAG: u32 = 0x0000_0080;
+pub const CP_DISABLED_UNMOUNT_FLAG: u32 = 0x0000_0100;
 
 // current segment 类型
 pub const CURSEG_HOT_DATA: usize = 0;

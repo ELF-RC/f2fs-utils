@@ -679,8 +679,12 @@ impl F2fsBuilder {
     /// 新建镜像写 pack0=1, pack1=0。
     fn write_checkpoint(&mut self) -> Result<()> {
         let curseg = self.segalloc.get_curseg_info();
-        let nat_bitmap = self.nat_bitmap();
-        let sit_bitmap = self.sit.version_bitmap();
+        // fsck 期望 sit/nat_ver_bitmap_bytesize = ((seg/2)*blks_per_seg)/8
+        let bitmap_size = |seg: u32| ((seg / 2) * DEFAULT_BLOCKS_PER_SEGMENT / 8) as usize;
+        let mut sit_bitmap = self.sit.version_bitmap();
+        sit_bitmap.resize(bitmap_size(self.layout.segment_count_sit), 0);
+        let mut nat_bitmap = self.nat_bitmap();
+        nat_bitmap.resize(bitmap_size(self.layout.segment_count_nat), 0);
 
         let blocks_per_seg = DEFAULT_BLOCKS_PER_SEGMENT;
         let cp_payload = self.layout.cp_payload;
@@ -717,13 +721,22 @@ impl F2fsBuilder {
         sit_bitmap: &[u8],
         cp_pack_total: u32,
     ) -> Vec<u8> {
+        let ovp = self
+            .segalloc
+            .free_segments()
+            .saturating_sub(NR_CURSEG_TYPE as u32)
+            .max(1);
+        // fsck 公式: (seg_main - overprov) * blocks_per_seg, 必须严格小于 seg_main<<log
+        let user_blocks = (u64::from(self.layout.segment_count_main)
+            .saturating_sub(u64::from(ovp)))
+            * u64::from(DEFAULT_BLOCKS_PER_SEGMENT);
         let mut cp = CheckpointBuilder::new()
             .with_version(version)
-            .with_user_block_count(self.layout.block_count - u64::from(self.layout.main_blkaddr))
+            .with_user_block_count(user_blocks)
             .with_valid_block_count(self.valid_block_count)
             .with_free_segment_count(self.segalloc.free_segments())
             .with_rsvd_segment_count(NR_CURSEG_TYPE as u32)
-            .with_overprov_segment_count(0)
+            .with_overprov_segment_count(ovp)
             .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W)
             .with_valid_node_count(self.valid_node_count)
             .with_valid_inode_count(self.valid_inode_count)

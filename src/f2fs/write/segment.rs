@@ -55,11 +55,20 @@ impl SegmentAllocator {
         let blkaddr = self.main_blkaddr + segno * self.blocks_per_seg + u32::from(blkoff);
         self.next_blkoff[idx] += 1;
         self.allocated_blocks += 1;
+        // 分配恰好填满一段后立即预切到下一段, 保证 get_curseg_info
+        // 快照的 next_blkoff < blocks_per_seg (fsck sanity_check_ckpt 要求)
+        if u32::from(self.next_blkoff[idx]) >= self.blocks_per_seg {
+            self.allocate_new_segment(seg_type)?;
+        }
         Ok(blkaddr)
     }
 
+    /// 段满时把当前段标记 used 并推进到下一段。
+    /// 在 alloc 入口检查, 保证任意时刻 next_blkoff < blocks_per_seg。
     fn allocate_new_segment(&mut self, seg_type: SegType) -> Result<()> {
         let idx = seg_type.curseg_index();
+        // 当前段已用满, 标记为 used (free_segments 计算需要)
+        self.used_segments.insert(self.current_segments[idx]);
         let mut next = self.current_segments[idx] + 1;
         loop {
             if next >= self.total_segments {
