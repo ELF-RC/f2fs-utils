@@ -826,7 +826,7 @@ impl F2fsBuilder {
             .with_free_segment_count(self.segalloc.free_segments())
             .with_rsvd_segment_count(NR_CURSEG_TYPE as u32)
             .with_overprov_segment_count(ovp)
-            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W | CP_NAT_BITS_FLAG)
+            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W)
             .with_valid_node_count(self.valid_node_count)
             .with_valid_inode_count(self.valid_inode_count)
             .with_next_free_nid(self.nat.next_free_nid())
