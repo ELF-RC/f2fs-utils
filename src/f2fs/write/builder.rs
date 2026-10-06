@@ -765,10 +765,10 @@ impl F2fsBuilder {
             self.write_block_at(nb_base + i as u32, chunk)?;
         }
         // pack1 末尾 (cp_blkaddr + 2*blks_per_seg - nat_bits_blocks)
-        let nb1_base = self.layout.cp_blkaddr + blocks_per_seg + (1u32 << log_blks_per_seg)
+        let pack1_tail = self.layout.cp_blkaddr + blocks_per_seg + (1u32 << log_blks_per_seg)
             - nat_bits_blocks as u32;
         for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
-            self.write_block_at(nb1_base + i as u32, chunk)?;
+            self.write_block_at(pack1_tail + i as u32, chunk)?;
         }
 
         Ok(())
