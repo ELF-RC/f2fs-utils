@@ -14,8 +14,8 @@ use crate::f2fs::types::Nid;
 use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
-    COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG,
-    DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
+    COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_NAT_BITS_FLAG,
+    CP_UMOUNT_FLAG, DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
@@ -755,11 +755,25 @@ impl F2fsBuilder {
 
         // nat_bits: 写在每个 pack 末尾的 nat_bits_blocks 个块。
         // 布局: [8B CP crc] + [nat_bits_bytes full bitmap] + [nat_bits_bytes empty bitmap]。
-        // nat_bits 写入已移除: 即使 CP_NAT_BITS_FLAG 关闭, build_nat_bits 仍往
-        // CP pack 尾部 (block 1023/1535) 写 5 字节, 与 #12 (能 mount) 的全零
-        // 尾部不一致。内核 build_segment_manager 虽不读这些 block, 但保留写入
-        // 与 #12 行为偏离, 暂移除以排除干扰。函数保留待后续正确实现。
-        // let _ = self.build_nat_bits;
+        // nat_bits: 写在每个 pack 末尾的 nat_bits_blocks 个块。
+        // 必须启用: 内核 load_free_nid_bitmap 见 CP_NAT_BITS_FLAG 后从 pack 末尾读
+        // nat_bits, 跳过对保留 inode (nid 1/2 block_addr=1) 的 NAT 扫描校验。
+        // 无 nat_bits 时内核扫到 block_addr=1 报 -EFSCORRUPTED(-117)。
+        // empty bitmap 必须精确: bit N=1 表示 NAT block N 全空。
+        // NAT block 0 含保留 inode + 实际 inode (非空), bit0=0; 其余 empty, bit=1。
+        let nat_bits = self.build_nat_bits(&cp0_header);
+        let log_blks_per_seg: u32 = 9; // DEFAULT_BLOCKS_PER_SEGMENT=512 的 log2
+        let nat_bits_blocks = nat_bits.len() / F2FS_BLKSIZE;
+        let nb_base = self.layout.cp_blkaddr + (1u32 << log_blks_per_seg) - nat_bits_blocks as u32;
+        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
+            self.write_block_at(nb_base + i as u32, chunk)?;
+        }
+        // pack1 末尾 (cp_blkaddr + 2*blks_per_seg - nat_bits_blocks)
+        let pack1_tail = self.layout.cp_blkaddr + blocks_per_seg + (1u32 << log_blks_per_seg)
+            - nat_bits_blocks as u32;
+        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
+            self.write_block_at(pack1_tail + i as u32, chunk)?;
+        }
 
         Ok(())
     }
@@ -767,12 +781,14 @@ impl F2fsBuilder {
     /// 构建 nat_bits 数据 (整个 CP pack 末尾的 nat_bits_blocks 个块)。
     /// 布局: [8B get_cp_crc] + [full_bits] + [empty_bits], 其中 full/empty 各 nat_bits_bytes。
     /// get_cp_crc = cp_ver | (crc << 32), 与内核/官方一致。
-    /// full/empty bitmap 默认全零 (无满 NAT block, 无 empty 标记)。
+    /// empty bitmap: bit N=1 表示 NAT block N 全空。
+    ///   NAT block 0 含保留 inode(1/2) + 实际 inode(3+), 非空 -> bit0=0;
+    ///   其余 NAT block 全空 -> bit=1。
+    /// full bitmap: bit N=1 表示 NAT block N 全满 (我们无满块, 全零)。
     #[allow(dead_code)]
     fn build_nat_bits(&self, cp_header: &[u8]) -> Vec<u8> {
-        // nat_bits_bytes = segment_count_nat << 5 (= /8 per NAT block)
-        let nat_bits_bytes =
-            (self.layout.segment_count_nat as usize) * DEFAULT_BLOCKS_PER_SEGMENT as usize / 8;
+        // nat_bits_bytes = segment_count_nat << 5 (与内核 fsck 一致: 每段 32 字节)
+        let nat_bits_bytes = (self.layout.segment_count_nat as usize) << 5;
         let total = 8 + nat_bits_bytes * 2; // crc + full + empty
         let nat_bits_blocks = total.div_ceil(F2FS_BLKSIZE);
         let mut buf = vec![0u8; nat_bits_blocks * F2FS_BLKSIZE];
@@ -788,7 +804,16 @@ impl F2fsBuilder {
         let cp_crc = (cp_ver & 0xFFFF_FFFF) | ((u64::from(crc)) << 32);
         buf[..8].copy_from_slice(&cp_crc.to_le_bytes());
 
-        // full/empty bitmap: 全零 (官方对照确认; 无满 NAT block, 无 empty 标记)
+        // full bitmap: 全零 (无满 NAT block)
+        // (buf[8..8+nat_bits_bytes] 已为零)
+
+        // empty bitmap: 默认全 1 (所有 NAT block empty), 清 bit 0 (block 0 非空)
+        let empty_off = 8 + nat_bits_bytes;
+        for b in &mut buf[empty_off..empty_off + nat_bits_bytes] {
+            *b = 0xFF;
+        }
+        buf[empty_off] &= 0xFE; // clear bit 0: NAT block 0 非空
+
         buf
     }
 
@@ -817,7 +842,7 @@ impl F2fsBuilder {
             .with_free_segment_count(self.segalloc.free_segments())
             .with_rsvd_segment_count(NR_CURSEG_TYPE as u32)
             .with_overprov_segment_count(ovp)
-            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W)
+            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W | CP_NAT_BITS_FLAG)
             .with_valid_node_count(self.valid_node_count)
             .with_valid_inode_count(self.valid_inode_count)
             .with_next_free_nid(self.nat.next_free_nid())
