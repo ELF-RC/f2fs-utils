@@ -117,7 +117,9 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          truncate -s $IMG_SIZE $GITHUB_WORKSPACE/C.raw
+          # 官方 mkfs 无 -g android (无 inline_data), 文件占块更多,
+          # 64MiB 装不下 6MiB 夹具; 用 256MiB 保证 sload 成功
+          truncate -s 268435456 $GITHUB_WORKSPACE/C.raw
           mkfs.f2fs $GITHUB_WORKSPACE/C.raw > C_mkfs.log 2>&1
           sload.f2fs -f fixture -t $MOUNT_POINT \
             -C $GITHUB_WORKSPACE/fs_config \
