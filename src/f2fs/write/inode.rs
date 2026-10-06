@@ -270,7 +270,13 @@ impl InodeBuilder {
         let mut buf = [0u8; F2FS_BLKSIZE];
 
         buf[..2].copy_from_slice(&self.mode.to_le_bytes());
-        buf[3] = self.inline_flags;
+        // has_extra_attr 时必须置位 F2FS_EXTRA_ATTR, 否则读侧 (内核/fsck/extract)
+        // has_extra_attr() 返回 false, i_addr 从 360 解析而非 396, 读错文件内容。
+        let mut flags = self.inline_flags;
+        if self.has_extra_attr {
+            flags |= F2FS_EXTRA_ATTR;
+        }
+        buf[3] = flags;
         buf[4..8].copy_from_slice(&self.uid.to_le_bytes());
         buf[8..12].copy_from_slice(&self.gid.to_le_bytes());
         buf[12..16].copy_from_slice(&self.links.to_le_bytes());
