@@ -14,8 +14,8 @@ use crate::f2fs::types::Nid;
 use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
-    COMPRESS_HEADER_SIZE, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, DEFAULT_BLOCKS_PER_SEGMENT,
-    MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
+    COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_NAT_BITS_FLAG,
+    CP_UMOUNT_FLAG, DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
@@ -753,7 +753,52 @@ impl F2fsBuilder {
         self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
         self.write_block_at(cp1_base + cp_pack_total - 1, &cp1_header)?;
 
+        // nat_bits: 写在每个 pack 末尾的 nat_bits_blocks 个块。
+        // 布局: [8B CP crc] + [nat_bits_bytes full bitmap] + [nat_bits_bytes empty bitmap]。
+        // fsck 见 CP_NAT_BITS_FLAG 后从 pack 末尾读 nat_bits, 跳过 f2fs_init_nid_bitmap
+        // 对保留 inode addr(1) 的校验 (无 nat_bits 时报 "addr(1) is invalid")。
+        let nat_bits = self.build_nat_bits(&cp0_header);
+        let log_blks_per_seg: u32 = 9; // DEFAULT_BLOCKS_PER_SEGMENT=512 的 log2
+        let nat_bits_blocks = nat_bits.len() / F2FS_BLKSIZE;
+        let nb_base = self.layout.cp_blkaddr + (1u32 << log_blks_per_seg) - nat_bits_blocks as u32;
+        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
+            self.write_block_at(nb_base + i as u32, chunk)?;
+        }
+        // pack1 末尾 (cp_blkaddr + 2*blks_per_seg - nat_bits_blocks)
+        let nb1_base = self.layout.cp_blkaddr + blocks_per_seg + (1u32 << log_blks_per_seg)
+            - nat_bits_blocks as u32;
+        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
+            self.write_block_at(nb1_base + i as u32, chunk)?;
+        }
+
         Ok(())
+    }
+
+    /// 构建 nat_bits 数据 (整个 CP pack 末尾的 nat_bits_blocks 个块)。
+    /// 布局: [8B get_cp_crc] + [full_bits] + [empty_bits], 其中 full/empty 各 nat_bits_bytes。
+    /// get_cp_crc = cp_ver | (crc << 32), 与内核/官方一致。
+    /// full/empty bitmap 默认全零 (无满 NAT block, 无 empty 标记)。
+    fn build_nat_bits(&self, cp_header: &[u8]) -> Vec<u8> {
+        // nat_bits_bytes = segment_count_nat << 5 (= /8 per NAT block)
+        let nat_bits_bytes =
+            (self.layout.segment_count_nat as usize) * DEFAULT_BLOCKS_PER_SEGMENT as usize / 8;
+        let total = 8 + nat_bits_bytes * 2; // crc + full + empty
+        let nat_bits_blocks = total.div_ceil(F2FS_BLKSIZE);
+        let mut buf = vec![0u8; nat_bits_blocks * F2FS_BLKSIZE];
+
+        // 首字段: get_cp_crc = cp_ver(低32) | (crc << 32)
+        let crc = u32::from_le_bytes([
+            cp_header[CP_CHKSUM_OFFSET],
+            cp_header[CP_CHKSUM_OFFSET + 1],
+            cp_header[CP_CHKSUM_OFFSET + 2],
+            cp_header[CP_CHKSUM_OFFSET + 3],
+        ]);
+        let cp_ver = self.cp_ver; // 1
+        let cp_crc = (cp_ver & 0xFFFF_FFFF) | ((u64::from(crc)) << 32);
+        buf[..8].copy_from_slice(&cp_crc.to_le_bytes());
+
+        // full/empty bitmap: 全零 (官方对照确认; 无满 NAT block, 无 empty 标记)
+        buf
     }
 
     /// 构建指定版本号的 checkpoint 头部 (4KiB)。
@@ -781,7 +826,7 @@ impl F2fsBuilder {
             .with_free_segment_count(self.segalloc.free_segments())
             .with_rsvd_segment_count(NR_CURSEG_TYPE as u32)
             .with_overprov_segment_count(ovp)
-            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W)
+            .with_flags(CP_UMOUNT_FLAG | CP_COMPACT_SUM_FLAG_W | CP_NAT_BITS_FLAG)
             .with_valid_node_count(self.valid_node_count)
             .with_valid_inode_count(self.valid_inode_count)
             .with_next_free_nid(self.nat.next_free_nid())

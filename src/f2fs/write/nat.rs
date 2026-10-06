@@ -88,10 +88,14 @@ impl NatManager {
     }
 
     /// 返回所有已分配的 NAT 条目 (nid, ino, block_addr), 供 compact summary 的 NAT journal 使用。
+    /// 过滤保留 inode (F2FS_NODE_INO/META_INO, block_addr=1 非合法块地址):
+    /// 它们写进 journal 会被 fsck f2fs_init_nid_bitmap 校验为 "addr(1) is invalid"。
+    /// 保留 inode 的 NAT 状态由 nat_bits + NAT 区承载, 不进 journal。
     pub fn journal_entries(&self) -> Vec<(u32, u32, u32)> {
         self.entries
             .iter()
-            .map(|(&nid, e)| (nid, e.ino, e.block_addr.0))
+            .filter(|(nid, _)| **nid >= F2FS_ROOT_INO)
+            .map(|(nid, e)| (*nid, e.ino, e.block_addr.0))
             .collect()
     }
 
