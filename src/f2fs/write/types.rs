@@ -221,7 +221,11 @@ impl Default for F2fsFeatures {
         // inline_data / inline_xattr / inline_dentry 是 inode i_inline 标志,
         // 不是 sb feature, 由 InodeBuilder 按需置位。
         Self {
-            bits: F2FS_FEATURE_ENCRYPT | F2FS_FEATURE_EXTRA_ATTR | F2FS_FEATURE_SB_CHKSUM,
+            bits: F2FS_FEATURE_ENCRYPT
+                | F2FS_FEATURE_VERITY
+                | F2FS_FEATURE_EXTRA_ATTR
+                | F2FS_FEATURE_PROJECT_QUOTA
+                | F2FS_FEATURE_QUOTA_INO,
         }
     }
 }

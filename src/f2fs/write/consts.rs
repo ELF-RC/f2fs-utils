@@ -10,7 +10,7 @@ pub const MAX_VOLUME_NAME: usize = 1024;
 pub const VERSION_LEN: usize = 256;
 pub const F2FS_VERSION: &[u8] = b"5.15.0";
 pub const F2FS_MAJOR_VERSION: u16 = 1;
-pub const F2FS_MINOR_VERSION: u16 = 0;
+pub const F2FS_MINOR_VERSION: u16 = 15; // 0xf, 与官方 mkfs.f2fs -g android 一致
 
 // 基础几何默认值
 pub const DEFAULT_SECTOR_SIZE: u32 = 512;
@@ -89,6 +89,7 @@ pub const F2FS_FEATURE_INODE_CHKSUM: u32 = 0x0000_0020;
 pub const F2FS_FEATURE_FLEXIBLE_INLINE_XATTR: u32 = 0x0000_0040;
 pub const F2FS_FEATURE_QUOTA_INO: u32 = 0x0000_0080;
 pub const F2FS_FEATURE_LOST_FOUND: u32 = 0x0000_0200;
+pub const F2FS_FEATURE_VERITY: u32 = 0x0000_0400; // fs-verity (官方 -g android 含此位)
 pub const F2FS_FEATURE_SB_CHKSUM: u32 = 0x0000_0800;
 pub const F2FS_FEATURE_CASEFOLD: u32 = 0x0000_1000;
 pub const F2FS_FEATURE_COMPRESSION: u32 = 0x0000_2000;
