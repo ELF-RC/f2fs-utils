@@ -14,8 +14,8 @@ use crate::f2fs::types::Nid;
 use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
 use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
 use crate::f2fs::write::consts::{
-    COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_NAT_BITS_FLAG,
-    CP_UMOUNT_FLAG, DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
+    COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG,
+    DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
 use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
 use crate::f2fs::write::inode::InodeBuilder;
