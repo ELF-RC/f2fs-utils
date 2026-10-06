@@ -755,21 +755,11 @@ impl F2fsBuilder {
 
         // nat_bits: 写在每个 pack 末尾的 nat_bits_blocks 个块。
         // 布局: [8B CP crc] + [nat_bits_bytes full bitmap] + [nat_bits_bytes empty bitmap]。
-        // fsck 见 CP_NAT_BITS_FLAG 后从 pack 末尾读 nat_bits, 跳过 f2fs_init_nid_bitmap
-        // 对保留 inode addr(1) 的校验 (无 nat_bits 时报 "addr(1) is invalid")。
-        let nat_bits = self.build_nat_bits(&cp0_header);
-        let log_blks_per_seg: u32 = 9; // DEFAULT_BLOCKS_PER_SEGMENT=512 的 log2
-        let nat_bits_blocks = nat_bits.len() / F2FS_BLKSIZE;
-        let nb_base = self.layout.cp_blkaddr + (1u32 << log_blks_per_seg) - nat_bits_blocks as u32;
-        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
-            self.write_block_at(nb_base + i as u32, chunk)?;
-        }
-        // pack1 末尾 (cp_blkaddr + 2*blks_per_seg - nat_bits_blocks)
-        let pack1_tail = self.layout.cp_blkaddr + blocks_per_seg + (1u32 << log_blks_per_seg)
-            - nat_bits_blocks as u32;
-        for (i, chunk) in nat_bits.chunks(F2FS_BLKSIZE).enumerate() {
-            self.write_block_at(pack1_tail + i as u32, chunk)?;
-        }
+        // nat_bits 写入已移除: 即使 CP_NAT_BITS_FLAG 关闭, build_nat_bits 仍往
+        // CP pack 尾部 (block 1023/1535) 写 5 字节, 与 #12 (能 mount) 的全零
+        // 尾部不一致。内核 build_segment_manager 虽不读这些 block, 但保留写入
+        // 与 #12 行为偏离, 暂移除以排除干扰。函数保留待后续正确实现。
+        // let _ = self.build_nat_bits;
 
         Ok(())
     }
