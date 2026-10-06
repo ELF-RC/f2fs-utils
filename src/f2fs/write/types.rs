@@ -138,10 +138,11 @@ pub struct Summary {
 
 impl Summary {
     pub fn to_bytes(&self) -> [u8; SUMMARY_SIZE] {
+        // 内核 struct f2fs_summary: nid@0 + ofs_in_node@4(u16 LE) + version@6(u8)
         let mut buf = [0u8; SUMMARY_SIZE];
         buf[..4].copy_from_slice(&self.nid.to_le_bytes());
-        buf[4] = self.version;
-        buf[5..7].copy_from_slice(&self.ofs_in_node.to_le_bytes());
+        buf[4..6].copy_from_slice(&self.ofs_in_node.to_le_bytes());
+        buf[6] = self.version;
         buf
     }
 }
