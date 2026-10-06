@@ -768,6 +768,7 @@ impl F2fsBuilder {
     /// 布局: [8B get_cp_crc] + [full_bits] + [empty_bits], 其中 full/empty 各 nat_bits_bytes。
     /// get_cp_crc = cp_ver | (crc << 32), 与内核/官方一致。
     /// full/empty bitmap 默认全零 (无满 NAT block, 无 empty 标记)。
+    #[allow(dead_code)]
     fn build_nat_bits(&self, cp_header: &[u8]) -> Vec<u8> {
         // nat_bits_bytes = segment_count_nat << 5 (= /8 per NAT block)
         let nat_bits_bytes =
