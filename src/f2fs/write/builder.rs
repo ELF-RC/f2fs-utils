@@ -787,8 +787,12 @@ impl F2fsBuilder {
     /// full bitmap: bit N=1 表示 NAT block N 全满 (我们无满块, 全零)。
     #[allow(dead_code)]
     fn build_nat_bits(&self, cp_header: &[u8]) -> Vec<u8> {
-        // nat_bits_bytes = segment_count_nat << 5 (与内核 fsck 一致: 每段 32 字节)
-        let nat_bits_bytes = (self.layout.segment_count_nat as usize) << 5;
+        // nat_bits_bytes = nat_blocks / 8; nat_blocks = nat_segs * blocks_per_seg
+        // (内核 node.c: nm_i->nat_blocks = nat_segs << log_blocks_per_seg)
+        // 之前误用 segment_count_nat<<5 (×32), 实际应是 segment_count_nat*512/8=×64。
+        let nat_blocks =
+            (self.layout.segment_count_nat as usize) * DEFAULT_BLOCKS_PER_SEGMENT as usize;
+        let nat_bits_bytes = nat_blocks / 8;
         let total = 8 + nat_bits_bytes * 2; // crc + full + empty
         let nat_bits_blocks = total.div_ceil(F2FS_BLKSIZE);
         let mut buf = vec![0u8; nat_bits_blocks * F2FS_BLKSIZE];
