@@ -52,12 +52,15 @@ impl NatManager {
 
     /// 初始化保留 inode: node_ino / meta_ino (block_addr=1 特殊标记) 与 root_ino。
     pub fn init_reserved_inodes(&mut self, root_blkaddr: u32) {
+        // F2FS_NODE_INO(1) / F2FS_META_INO(2) 是内核元数据 inode,
+        // 无对应数据块; block_addr 用 NULL_ADDR(0), 否则 fsck
+        // f2fs_init_nid_bitmap 校验 "addr is invalid"。
         self.entries.insert(
             F2FS_NODE_INO,
             NatEntryW {
                 version: 0,
                 ino: F2FS_NODE_INO,
-                block_addr: Block(1),
+                block_addr: Block(crate::f2fs::consts::NULL_ADDR),
             },
         );
         self.entries.insert(
@@ -65,7 +68,7 @@ impl NatManager {
             NatEntryW {
                 version: 0,
                 ino: F2FS_META_INO,
-                block_addr: Block(1),
+                block_addr: Block(crate::f2fs::consts::NULL_ADDR),
             },
         );
         self.entries.insert(
