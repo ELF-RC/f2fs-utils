@@ -136,7 +136,6 @@ impl InodeBuilder {
         b.uid = uid;
         b.gid = gid;
         b.links = 2;
-        b.has_extra_attr = false;
         b
     }
 
@@ -145,7 +144,6 @@ impl InodeBuilder {
         b.mode = S_IFREG | (mode & 0o7777);
         b.uid = uid;
         b.gid = gid;
-        b.has_extra_attr = false;
         b
     }
 
@@ -155,7 +153,6 @@ impl InodeBuilder {
         b.uid = uid;
         b.gid = gid;
         b.inline_flags = F2FS_INLINE_DATA | F2FS_DATA_EXIST;
-        b.has_extra_attr = false;
         b.blocks = 1;
         b
     }
