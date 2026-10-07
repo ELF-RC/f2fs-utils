@@ -92,22 +92,26 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          set -e
+          set +e
           # 对比诊断: 官方 mkfs+sload 镜像能否在本 runner mount (区分镜像 vs 环境)
           echo "=== gold64 (official) mount test ==="
-          truncate -s $IMG_SIZE /tmp/gold64.raw
-          mkfs.f2fs -g android /tmp/gold64.raw > /tmp/g_mkfs.log 2>&1
-          sload.f2fs -f fixture -t $MOUNT_POINT /tmp/gold64.raw > /tmp/g_sload.log 2>&1
-          GLOOP=$(sudo losetup -fP --show /tmp/gold64.raw)
-          sudo mount -t f2fs $GLOOP /mnt 2>>/tmp/g_mount.log || echo "gold64 mount FAILED"
-          if mountpoint -q /mnt 2>/dev/null; then
-            echo "gold64 mount OK (runner env fine, problem is in our image)"
-            sudo umount /mnt
+          truncate -s $IMG_SIZE /tmp/gold64.raw 2>/dev/null
+          mkfs.f2fs -g android /tmp/gold64.raw 2>&1 | tail -1
+          sload.f2fs -f fixture -t $MOUNT_POINT /tmp/gold64.raw 2>&1 | tail -1
+          GLOOP=$(sudo losetup -fP --show /tmp/gold64.raw 2>/dev/null)
+          sudo mount -t f2fs $GLOOP /mnt 2>&1
+          GMNT=$?
+          if [ $GMNT -eq 0 ] && mountpoint -q /mnt 2>/dev/null; then
+            echo ">>> gold64 mount OK (runner env fine, defect is in OUR image)"
+            sudo umount /mnt 2>/dev/null
+          else
+            echo ">>> gold64 mount FAILED exit=$GMNT (runner env / kernel rejects official image too)"
           fi
-          sudo losetup -d $GLOOP 2>/dev/null || true
-          cat /tmp/g_mount.log 2>/dev/null
-          sudo dmesg | grep -iE "f2fs|loop" | tail -5 || true
+          sudo losetup -d $GLOOP 2>/dev/null
+          echo "--- gold64 dmesg ---"
+          sudo dmesg | grep -iE "f2fs" | tail -4
           echo "=== our image mount ==="
+          set -e
           LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/A.raw)
           sudo mkdir -p /mnt /mnt_check
           sudo mount -t f2fs $LOOP /mnt 2>>B_mount.log
