@@ -360,9 +360,9 @@ impl F2fsBuilder {
                 let data = fs::read(&entry_path)
                     .with_context(|| format!("failed to read {}", entry_path.display()))?;
 
-                let node_blkaddr = self.segalloc.alloc_node_block(SegType::WarmNode)?;
+                let node_blkaddr = self.segalloc.alloc_node_block(SegType::HotNode)?;
                 self.nat.set_entry(Nid(nid), node_blkaddr, nid);
-                self.mark_node_block(node_blkaddr, nid, SegType::WarmNode);
+                self.mark_node_block(node_blkaddr, nid, SegType::HotNode);
                 self.valid_node_count += 1;
                 self.valid_inode_count += 1;
                 self.valid_block_count += 1;
@@ -413,9 +413,9 @@ impl F2fsBuilder {
                     .with_context(|| format!("failed to readlink {}", entry_path.display()))?;
                 let target_str = target.to_string_lossy();
 
-                let node_blkaddr = self.segalloc.alloc_node_block(SegType::WarmNode)?;
+                let node_blkaddr = self.segalloc.alloc_node_block(SegType::HotNode)?;
                 self.nat.set_entry(Nid(nid), node_blkaddr, nid);
-                self.mark_node_block(node_blkaddr, nid, SegType::WarmNode);
+                self.mark_node_block(node_blkaddr, nid, SegType::HotNode);
 
                 let inode = InodeBuilder::new_symlink(uid, gid)
                     .with_links(1)

@@ -81,31 +81,8 @@ jobs:
           set -e
           ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
-          # 诊断: fsck 前 dump segno 4 (WARM_NODE curseg) 的 SIT entry (输出到 stdout)
-          echo "=== before fsck: SIT segno 4 (base@1536 + mirror@2048) ==="
-          python3 -c "
-          import struct
-          with open('A.raw','rb') as f:
-              for copy,blk in [('base',1536),('mirror',2048)]:
-                  f.seek(blk*4096+4*74); e=f.read(74)
-                  vb=struct.unpack_from('<H',e,0)[0]
-                  print(f'  {copy}: type={vb>>10} valid={vb&0x3ff} vm[:8]={e[2:10].hex()} bit6={(e[2]>>6)&1}')
-              f.seek(512*4096+40); ns=[struct.unpack_from('<I',f.read(4))[0] for _ in range(3)]
-              f.seek(512*4096+68); nb=[struct.unpack_from('<H',f.read(2))[0] for _ in range(3)]
-              print(f'  CP node_segno={[hex(x) for x in ns]} blkoff={nb}')
-          "
           fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
-          # 诊断: fsck 后 dump segno 4
-          echo "=== after fsck: SIT segno 4 ==="
-          python3 -c "
-          import struct
-          with open('A.raw','rb') as f:
-              for copy,blk in [('base',1536),('mirror',2048)]:
-                  f.seek(blk*4096+4*74); e=f.read(74)
-                  vb=struct.unpack_from('<H',e,0)[0]
-                  print(f'  {copy}: type={vb>>10} valid={vb&0x3ff} vm[:8]={e[2:10].hex()} bit6={(e[2]>>6)&1}')
-          "
       - if: always()
         run: cat *.log 2>/dev/null || true
 
@@ -116,49 +93,6 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          # 诊断: dump 两 CP pack 的 ver+CRC+footer+curseg (确认内核选哪个 pack)
-          echo "=== CP pack diagnosis ==="
-          python3 -c "
-          import struct
-          with open('A.raw','rb') as f:
-              for pack,base in [('pack0',512),('pack1',1024)]:
-                  f.seek(base*4096); cp=f.read(4096)
-                  ver=struct.unpack_from('<Q',cp,0)[0]
-                  ns=[struct.unpack_from('<I',cp,36+i*4)[0] for i in range(3)]
-                  nb=[struct.unpack_from('<H',cp,68+i*2)[0] for i in range(3)]
-                  cpt=struct.unpack_from('<I',cp,136)[0]
-                  crc=struct.unpack_from('<I',cp,4092)[0]
-                  f.seek((base+cpt-1)*4096); ft=f.read(4096)
-                  fver=struct.unpack_from('<Q',ft,0)[0]
-                  fcrc=struct.unpack_from('<I',ft,4092)[0]
-                  print(f'  {pack}@{base}: ver={ver} node_segno={[hex(x) for x in ns]} blkoff={nb} crc={crc:#x} footer_ver={fver} footer_crc={fcrc:#x}')
-          # 诊断: 模拟 6.8 内核读 segno 4 (WARM_NODE) 的完整路径
-          print('=== kernel-view SIT segno 4 read path ===')
-          with open('A.raw','rb') as f:
-              f.seek(1024+56); sit_segs=struct.unpack('<I',f.read(4))[0]
-              f.seek(1024+80); sit_base=struct.unpack('<I',f.read(4))[0]
-              f.seek(1024+20); log_blks=struct.unpack('<I',f.read(4))[0]
-              f.seek(1024+68); main_segs=struct.unpack('<I',f.read(4))[0]
-              sit_blocks=(sit_segs>>1)<<log_blks
-              # sit_bitmap from CP @192, size @156
-              f.seek(512*4096+156); sit_bm_sz=struct.unpack('<I',f.read(4))[0]
-              f.seek(512*4096+192); sit_bm=f.read(sit_bm_sz)
-              # SIT_ENTRY_PER_BLOCK=55, SIT_BLOCK_OFFSET(4)=0
-              SENT=55; BPS=512
-              segno=4
-              blk_off=segno//SENT
-              bit=(sit_bm[blk_off//8]>>(blk_off%8))&1
-              addr=sit_base + (sit_blocks if bit else 0) + blk_off
-              f.seek(addr*4096 + (segno%SENT)*74); e=f.read(74)
-              vb=struct.unpack_from('<H',e,0)[0]
-              print(f'  sit_segs={sit_segs} sit_base={sit_base} sit_blocks={sit_blocks} bm_sz={sit_bm_sz}')
-              print(f'  segno {segno}: SIT_BLOCK_OFFSET={blk_off} bit={bit} addr={addr} (base={sit_base},mir={sit_base+sit_blocks})')
-              print(f'  entry: type={vb>>10} valid={vb&0x3ff} vm[0]={e[2]:#04x} bit6={(e[2]>>6)&1}')
-              # WARM_NODE curseg next_blkoff
-              f.seek(512*4096+70); nb1=struct.unpack('<H',f.read(2))[0]
-              print(f'  CP cur_node_blkoff[1](WARM_NODE)={nb1} -> kernel tests bit{nb1}')
-              print(f'  -> bit{nb1}={(e[2]>>(nb1%8))&1 if nb1<8 else \"?\"} (内核 sanity_check 期望 0)')
-          "
           LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/A.raw)
           sudo mkdir -p /mnt /mnt_check
           sudo mount -t f2fs $LOOP /mnt 2>>B_mount.log
