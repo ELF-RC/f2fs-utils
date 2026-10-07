@@ -51,10 +51,13 @@ impl CheckpointBuilder {
             rsvd_segment_count: 0,
             overprov_segment_count: 0,
             free_segment_count: 0,
-            cur_node_segno: [0; MAX_ACTIVE_NODE_LOGS],
-            cur_node_blkoff: [0; MAX_ACTIVE_NODE_LOGS],
-            cur_data_segno: [0; MAX_ACTIVE_DATA_LOGS],
-            cur_data_blkoff: [0; MAX_ACTIVE_DATA_LOGS],
+            // curseg 数组高位索引 [3..8] 是 LFS/RSS/ATSS/GC 等保留类型,
+            // 官方填 NULL_SEGNO(0xffffffff)/0xffff; 若填 0, 内核 build_curseg
+            // 把 segno 0 当有效 curseg, 与 SIT 不一致 → build_segment_manager -117。
+            cur_node_segno: [0xFFFFFFFF; MAX_ACTIVE_NODE_LOGS],
+            cur_node_blkoff: [0xFFFF; MAX_ACTIVE_NODE_LOGS],
+            cur_data_segno: [0xFFFFFFFF; MAX_ACTIVE_DATA_LOGS],
+            cur_data_blkoff: [0xFFFF; MAX_ACTIVE_DATA_LOGS],
             ckpt_flags: CP_UMOUNT_FLAG,
             cp_pack_total_block_count: 2,
             cp_pack_start_sum: 1,
@@ -152,6 +155,8 @@ impl CheckpointBuilder {
             let off = 36 + i * 4;
             buf[off..off + 4].copy_from_slice(&s.to_le_bytes());
         }
+        // cur_node_blkoff[8] @ 68 (8×u16=16B), cur_data_segno[8] @ 84,
+        // cur_data_blkoff[8] @ 116 — 按 struct f2fs_checkpoint 紧凑布局。
         for (i, &b) in self.cur_node_blkoff.iter().enumerate() {
             let off = 68 + i * 2;
             buf[off..off + 2].copy_from_slice(&b.to_le_bytes());
@@ -164,6 +169,9 @@ impl CheckpointBuilder {
             let off = 116 + i * 2;
             buf[off..off + 2].copy_from_slice(&b.to_le_bytes());
         }
+        // struct f2fs_checkpoint 紧凑布局 (数组均 8 元素):
+        // cur_node_segno[8]@36(32B) cur_node_blkoff[8]@68(16B)
+        // cur_data_segno[8]@84(32B) cur_data_blkoff[8]@116(16B) -> 132
         buf[132..136].copy_from_slice(&self.ckpt_flags.to_le_bytes());
         buf[136..140].copy_from_slice(&self.cp_pack_total_block_count.to_le_bytes());
         buf[140..144].copy_from_slice(&self.cp_pack_start_sum.to_le_bytes());
@@ -174,10 +182,11 @@ impl CheckpointBuilder {
         buf[160..164].copy_from_slice(&self.nat_ver_bitmap_bytesize.to_le_bytes());
         buf[164..168].copy_from_slice(&(CP_CHKSUM_OFFSET as u32).to_le_bytes());
         buf[168..176].copy_from_slice(&self.elapsed_time.to_le_bytes());
+        // alloc_type[MAX_ACTIVE_LOGS=16] @ 176 (紧随 elapsed_time 168..176)
         buf[176..192].copy_from_slice(&self.alloc_type);
 
-        // sit_nat_version bitmap (偏移 192)
-        let bitmap_off = CHECKPOINT_HEADER_SIZE;
+        // sit_nat_version bitmap @ 192 (紧随 alloc_type)
+        let bitmap_off = 192;
         let sit_end = bitmap_off + self.sit_bitmap.len();
         if sit_end <= CP_CHKSUM_OFFSET {
             buf[bitmap_off..sit_end].copy_from_slice(&self.sit_bitmap);
