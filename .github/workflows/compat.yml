@@ -81,8 +81,8 @@ jobs:
           set -e
           ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
-          # 诊断: fsck 前 dump segno 4 (WARM_NODE curseg) 的 SIT entry
-          echo "=== before fsck: SIT segno 4 (base@1536 + mirror@2048) ===" >> A_fsck.log
+          # 诊断: fsck 前 dump segno 4 (WARM_NODE curseg) 的 SIT entry (输出到 stdout)
+          echo "=== before fsck: SIT segno 4 (base@1536 + mirror@2048) ==="
           python3 -c "
           import struct
           with open('A.raw','rb') as f:
@@ -93,11 +93,11 @@ jobs:
               f.seek(512*4096+40); ns=[struct.unpack_from('<I',f.read(4))[0] for _ in range(3)]
               f.seek(512*4096+68); nb=[struct.unpack_from('<H',f.read(2))[0] for _ in range(3)]
               print(f'  CP node_segno={[hex(x) for x in ns]} blkoff={nb}')
-          " >> A_fsck.log 2>&1
-          fsck.f2fs -a A.raw >> A_fsck.log 2>&1
+          "
+          fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
           # 诊断: fsck 后 dump segno 4
-          echo "=== after fsck: SIT segno 4 ===" >> A_fsck.log
+          echo "=== after fsck: SIT segno 4 ==="
           python3 -c "
           import struct
           with open('A.raw','rb') as f:
@@ -105,8 +105,8 @@ jobs:
                   f.seek(blk*4096+4*74); e=f.read(74)
                   vb=struct.unpack_from('<H',e,0)[0]
                   print(f'  {copy}: type={vb>>10} valid={vb&0x3ff} vm[:8]={e[2:10].hex()} bit6={(e[2]>>6)&1}')
-          " >> A_fsck.log 2>&1
-      - if: always() && steps.stageA.outcome != 'success'
+          "
+      - if: always()
         run: cat *.log 2>/dev/null || true
 
       # ── 阶段 B:自合成 → 内核挂载比对 ────────────────────────
