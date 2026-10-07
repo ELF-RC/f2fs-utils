@@ -2,7 +2,7 @@
 
 use crate::f2fs::consts::F2FS_BLKSIZE;
 use crate::f2fs::write::consts::{
-    CHECKPOINT_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, F2FS_FIRST_INO,
+    CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, F2FS_FIRST_INO,
 };
 use crate::f2fs::write::crc::crc32;
 
@@ -54,10 +54,10 @@ impl CheckpointBuilder {
             // curseg 数组高位索引 [3..8] 是 LFS/RSS/ATSS/GC 等保留类型,
             // 官方填 NULL_SEGNO(0xffffffff)/0xffff; 若填 0, 内核 build_curseg
             // 把 segno 0 当有效 curseg, 与 SIT 不一致 → build_segment_manager -117。
-            cur_node_segno: [0xFFFFFFFF; MAX_ACTIVE_NODE_LOGS],
-            cur_node_blkoff: [0xFFFF; MAX_ACTIVE_NODE_LOGS],
-            cur_data_segno: [0xFFFFFFFF; MAX_ACTIVE_DATA_LOGS],
-            cur_data_blkoff: [0xFFFF; MAX_ACTIVE_DATA_LOGS],
+            cur_node_segno: [u32::MAX; MAX_ACTIVE_NODE_LOGS],
+            cur_node_blkoff: [u16::MAX; MAX_ACTIVE_NODE_LOGS],
+            cur_data_segno: [u32::MAX; MAX_ACTIVE_DATA_LOGS],
+            cur_data_blkoff: [u16::MAX; MAX_ACTIVE_DATA_LOGS],
             ckpt_flags: CP_UMOUNT_FLAG,
             cp_pack_total_block_count: 2,
             cp_pack_start_sum: 1,
