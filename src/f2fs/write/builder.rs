@@ -730,20 +730,36 @@ impl F2fsBuilder {
         let blocks_per_seg = DEFAULT_BLOCKS_PER_SEGMENT;
         let cp_payload = self.layout.cp_payload;
 
-        // cp_pack_total = 1 (header) + cp_payload + 1 (compact summary) + 1 (footer)
-        // 内核 validate_checkpoint 读 footer @ cp_blkaddr + cp_pack_total - 1,
-        // 要求 footer.checkpoint_ver == header.checkpoint_ver (footer = header 副本)。
-        // compact summary 写在 header+payload 之后、footer 之前。
-        let cp_pack_total = 3 + cp_payload;
+        // cp_pack 布局 (cp_payload=0 时共 6 块):
+        //   [0] header, [1..1+payload] cp_payload,
+        //   [1+payload] compact data summary,
+        //   [2+payload..5+payload] 3 个 node summary (HOT/WARM/COLD_NODE),
+        //   [5+payload] footer (= header 副本).
+        // 内核 sum_blk_addr = cp_base + cp_pack_total - (base+1) + type;
+        // node summary (NR_CURSEG_NODE_TYPE=3) 地址 = cp_base + total - 4 + i.
+        // 若 total=3, 地址 = cp_base-1 (越界读 nat_bits) → curseg restore 失败 → -117.
+        let cp_pack_total = 6 + cp_payload;
 
         // compact summary 两份共用 (NAT/SIT journal 内容一致)
         let compact_summary = self.build_compact_summary();
+
+        // 3 个 node summary 块: 各 curseg node 段的 SSA summary 快照。
+        // 内核 read_normal_summaries(CURSEG_HOT_NODE..COLD_NODE) 从 CP pack 末尾读它们。
+        let node_summaries: Vec<[u8; F2FS_BLKSIZE]> = (0..3)
+            .map(|i| {
+                self.ssa
+                    .build_curseg_summary(curseg.node_segno[i] as usize, true)
+            })
+            .collect();
 
         // 写 pack 0 (ver=1, 活跃)
         let cp0_header = self.build_cp_header(1, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
         let cp0_base = self.layout.cp_blkaddr;
         self.write_block_at(cp0_base, &cp0_header)?;
         self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
+        for (i, sum) in node_summaries.iter().enumerate() {
+            self.write_block_at(cp0_base + 2 + cp_payload + i as u32, sum)?;
+        }
         self.write_block_at(cp0_base + cp_pack_total - 1, &cp0_header)?;
 
         // 写 pack 1 (ver=0, 旧): 内容一致仅版本号不同
@@ -751,6 +767,9 @@ impl F2fsBuilder {
         let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
         self.write_block_at(cp1_base, &cp1_header)?;
         self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
+        for (i, sum) in node_summaries.iter().enumerate() {
+            self.write_block_at(cp1_base + 2 + cp_payload + i as u32, sum)?;
+        }
         self.write_block_at(cp1_base + cp_pack_total - 1, &cp1_header)?;
 
         // nat_bits: 写在每个 pack 末尾的 nat_bits_blocks 个块。
