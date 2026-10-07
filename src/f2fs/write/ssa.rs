@@ -5,7 +5,6 @@ use crate::f2fs::error::Result;
 use crate::f2fs::write::consts::{
     DEFAULT_BLOCKS_PER_SEGMENT, SUM_FOOTER_SIZE, SUM_TYPE_DATA, SUM_TYPE_NODE, SUMMARY_SIZE,
 };
-use crate::f2fs::write::crc::crc32;
 use crate::f2fs::write::types::Summary;
 
 const ENTRIES_IN_SUM: usize = F2FS_BLKSIZE / 8;
@@ -92,10 +91,10 @@ impl SsaManager {
             let off = i * SUMMARY_SIZE;
             buf[off..off + SUMMARY_SIZE].copy_from_slice(&entry.to_bytes());
         }
+        // 官方 mkfs 对所有 SSA summary block 只写 footer_type, crc 全零
+        // (内核不校验 SSA summary crc)。seg_types 记录每段类型 (DATA/NODE)。
         let footer = F2FS_BLKSIZE - SUM_FOOTER_SIZE;
         buf[footer] = self.seg_types[segno];
-        let checksum = crc32(&buf[..=footer]);
-        buf[footer + 1..footer + 5].copy_from_slice(&checksum.to_le_bytes());
         buf
     }
 
@@ -109,14 +108,13 @@ impl SsaManager {
                 buf[off..off + SUMMARY_SIZE].copy_from_slice(&entry.to_bytes());
             }
         }
+        // 官方 mkfs 对 CP pack summary 块也只写 footer_type, crc 全零
         let footer = F2FS_BLKSIZE - SUM_FOOTER_SIZE;
         buf[footer] = if is_node {
             SUM_TYPE_NODE
         } else {
             SUM_TYPE_DATA
         };
-        let checksum = crc32(&buf[..=footer]);
-        buf[footer + 1..footer + 5].copy_from_slice(&checksum.to_le_bytes());
         buf
     }
 
