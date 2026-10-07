@@ -116,6 +116,23 @@ jobs:
         continue-on-error: true
         run: |
           set -e
+          # 诊断: dump 两 CP pack 的 ver+CRC+footer+curseg (确认内核选哪个 pack)
+          echo "=== CP pack diagnosis ==="
+          python3 -c "
+          import struct
+          with open('A.raw','rb') as f:
+              for pack,base in [('pack0',512),('pack1',1024)]:
+                  f.seek(base*4096); cp=f.read(4096)
+                  ver=struct.unpack_from('<Q',cp,0)[0]
+                  ns=[struct.unpack_from('<I',cp,36+i*4)[0] for i in range(3)]
+                  nb=[struct.unpack_from('<H',cp,68+i*2)[0] for i in range(3)]
+                  cpt=struct.unpack_from('<I',cp,136)[0]
+                  crc=struct.unpack_from('<I',cp,4092)[0]
+                  f.seek((base+cpt-1)*4096); ft=f.read(4096)
+                  fver=struct.unpack_from('<Q',ft,0)[0]
+                  fcrc=struct.unpack_from('<I',ft,4092)[0]
+                  print(f'  {pack}@{base}: ver={ver} node_segno={[hex(x) for x in ns]} blkoff={nb} crc={crc:#x} footer_ver={fver} footer_crc={fcrc:#x}')
+          "
           LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/A.raw)
           sudo mkdir -p /mnt /mnt_check
           sudo mount -t f2fs $LOOP /mnt 2>>B_mount.log
