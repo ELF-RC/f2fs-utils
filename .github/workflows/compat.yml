@@ -81,33 +81,40 @@ jobs:
           set -e
           ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
-          # 诊断: fsck 前 dump HOT_NODE curseg 段的 SIT entry
-          echo "=== before fsck: HOT_NODE curseg SIT (segno from CP) ==="
-          python3 -c "
-          import struct
-          with open('A.raw','rb') as f:
-              f.seek(512*4096+36); ns=struct.unpack_from('<I',f.read(4))[0]
-              f.seek(512*4096+68); nb=struct.unpack_from('<H',f.read(2))[0]
-              for copy,blk in [('base',1536),('mirror',2048)]:
-                  f.seek(blk*4096+ns*74); e=f.read(74)
-                  vb=struct.unpack_from('<H',e,0)[0]
-                  bit_nb=(e[2+nb//8]>>(nb%8))&1 if nb<64 else '?'
-                  print(f'  {copy}: segno={ns} valid={vb&0x3ff} vm[0:2]={e[2:4].hex()} bit{nb}={bit_nb} (内核期望0)')
-              print(f'  CP cur_node_blkoff[0]={nb}')
-          "
           fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
-          echo "=== after fsck: HOT_NODE curseg SIT ==="
+          # 诊断: base64 输出 SIT block 1536 前 512 字节 + CP curseg + sit_bitmap
+          echo "=== SIT block 1536 base64 (前 512B, 含 segno 0-6 entries) ==="
           python3 -c "
-          import struct
+          import struct, base64
           with open('A.raw','rb') as f:
               f.seek(512*4096+36); ns=struct.unpack_from('<I',f.read(4))[0]
               f.seek(512*4096+68); nb=struct.unpack_from('<H',f.read(2))[0]
-              for copy,blk in [('base',1536),('mirror',2048)]:
-                  f.seek(blk*4096+ns*74); e=f.read(74)
-                  vb=struct.unpack_from('<H',e,0)[0]
-                  bit_nb=(e[2+nb//8]>>(nb%8))&1 if nb<64 else '?'
-                  print(f'  {copy}: segno={ns} valid={vb&0x3ff} vm[0:2]={e[2:4].hex()} bit{nb}={bit_nb}')
+              f.seek(512*4096+132); flags=struct.unpack_from('<I',f.read(4))[0]
+              f.seek(512*4096+156); sit_bm_sz=struct.unpack_from('<I',f.read(4))[0]
+              f.seek(512*4096+192); sit_bm=f.read(sit_bm_sz)
+              f.seek(1536*4096); sit_blk=f.read(512)
+              f.seek(2048*4096); sit_mir=f.read(512)
+              print(f'  cur_node_segno[0]={ns} blkoff[0]={nb} flags={flags:#x} sit_bm_sz={sit_bm_sz}')
+              print(f'  sit_bitmap[:16]={sit_bm[:16].hex()}')
+              print(f'  sit_block_1536[:512] base64:')
+              print(base64.b64encode(sit_blk).decode())
+              print(f'  sit_mirror_2048[:512] base64:')
+              print(base64.b64encode(sit_mir).decode())
+              # 模拟内核完整路径
+              sit_segs=struct.unpack_from('<I',open('A.raw','rb').read()[1024+56:1024+60])[0]
+              sit_base=struct.unpack_from('<I',open('A.raw','rb').read()[1024+80:1024+84])[0]
+              log_blks=struct.unpack_from('<I',open('A.raw','rb').read()[1024+20:1024+24])[0]
+              sit_blocks=(sit_segs>>1)<<log_blks
+              SENT=55
+              blk_off=ns//SENT
+              bit=(sit_bm[blk_off//8]>>(blk_off%8))&1
+              addr=sit_base+(sit_blocks if bit else 0)+blk_off
+              print(f'  kernel path: sit_blocks={sit_blocks} bit={bit} addr={addr}')
+              with open('A.raw','rb') as f2:
+                  f2.seek(addr*4096+(ns%SENT)*74); e=f2.read(74)
+              vb=struct.unpack_from('<H',e,0)[0]
+              print(f'  kernel reads segno {ns}: valid={vb&0x3ff} vm[0:2]={e[2:4].hex()} bit{nb}={(e[2+nb//8]>>(nb%8))&1}')
           "
       - if: always()
         run: cat *.log 2>/dev/null || true
