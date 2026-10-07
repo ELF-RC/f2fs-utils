@@ -81,8 +81,34 @@ jobs:
           set -e
           ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
+          # 诊断: fsck 前 dump HOT_NODE curseg 段的 SIT entry
+          echo "=== before fsck: HOT_NODE curseg SIT (segno from CP) ==="
+          python3 -c "
+          import struct
+          with open('A.raw','rb') as f:
+              f.seek(512*4096+36); ns=struct.unpack_from('<I',f.read(4))[0]
+              f.seek(512*4096+68); nb=struct.unpack_from('<H',f.read(2))[0]
+              for copy,blk in [('base',1536),('mirror',2048)]:
+                  f.seek(blk*4096+ns*74); e=f.read(74)
+                  vb=struct.unpack_from('<H',e,0)[0]
+                  bit_nb=(e[2+nb//8]>>(nb%8))&1 if nb<64 else '?'
+                  print(f'  {copy}: segno={ns} valid={vb&0x3ff} vm[0:2]={e[2:4].hex()} bit{nb}={bit_nb} (内核期望0)')
+              print(f'  CP cur_node_blkoff[0]={nb}')
+          "
           fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
+          echo "=== after fsck: HOT_NODE curseg SIT ==="
+          python3 -c "
+          import struct
+          with open('A.raw','rb') as f:
+              f.seek(512*4096+36); ns=struct.unpack_from('<I',f.read(4))[0]
+              f.seek(512*4096+68); nb=struct.unpack_from('<H',f.read(2))[0]
+              for copy,blk in [('base',1536),('mirror',2048)]:
+                  f.seek(blk*4096+ns*74); e=f.read(74)
+                  vb=struct.unpack_from('<H',e,0)[0]
+                  bit_nb=(e[2+nb//8]>>(nb%8))&1 if nb<64 else '?'
+                  print(f'  {copy}: segno={ns} valid={vb&0x3ff} vm[0:2]={e[2:4].hex()} bit{nb}={bit_nb}')
+          "
       - if: always()
         run: cat *.log 2>/dev/null || true
 
