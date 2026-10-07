@@ -93,6 +93,21 @@ jobs:
         continue-on-error: true
         run: |
           set -e
+          # 对比诊断: 官方 mkfs+sload 镜像能否在本 runner mount (区分镜像 vs 环境)
+          echo "=== gold64 (official) mount test ==="
+          truncate -s $IMG_SIZE /tmp/gold64.raw
+          mkfs.f2fs -g android /tmp/gold64.raw > /tmp/g_mkfs.log 2>&1
+          sload.f2fs -f fixture -t $MOUNT_POINT /tmp/gold64.raw > /tmp/g_sload.log 2>&1
+          GLOOP=$(sudo losetup -fP --show /tmp/gold64.raw)
+          sudo mount -t f2fs $GLOOP /mnt 2>>/tmp/g_mount.log || echo "gold64 mount FAILED"
+          if mountpoint -q /mnt 2>/dev/null; then
+            echo "gold64 mount OK (runner env fine, problem is in our image)"
+            sudo umount /mnt
+          fi
+          sudo losetup -d $GLOOP 2>/dev/null || true
+          cat /tmp/g_mount.log 2>/dev/null
+          sudo dmesg | grep -iE "f2fs|loop" | tail -5 || true
+          echo "=== our image mount ==="
           LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/A.raw)
           sudo mkdir -p /mnt /mnt_check
           sudo mount -t f2fs $LOOP /mnt 2>>B_mount.log
