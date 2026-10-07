@@ -730,21 +730,31 @@ impl F2fsBuilder {
         let blocks_per_seg = DEFAULT_BLOCKS_PER_SEGMENT;
         let cp_payload = self.layout.cp_payload;
 
-        // cp_pack 布局 (cp_payload=0 时共 6 块):
-        //   [0] header, [1..1+payload] cp_payload,
-        //   [1+payload] compact data summary,
-        //   [2+payload..5+payload] 3 个 node summary (HOT/WARM/COLD_NODE),
-        //   [5+payload] footer (= header 副本).
-        // 内核 sum_blk_addr = cp_base + cp_pack_total - (base+1) + type;
-        // node summary (NR_CURSEG_NODE_TYPE=3) 地址 = cp_base + total - 4 + i.
-        // 若 total=3, 地址 = cp_base-1 (越界读 nat_bits) → curseg restore 失败 → -117.
-        let cp_pack_total = 6 + cp_payload;
+        // cp_pack 布局 (cp_payload=0 时共 8 块), 对齐官方 mkfs+sload:
+        //   [0] header, [1..1+p] cp_payload,
+        //   [1+p] compact summary (= DATA HOT summary, 复用),
+        //   [2+p] DATA WARM summary, [3+p] DATA COLD summary,
+        //   [4+p..6+p] 3 个 NODE summary (HOT/WARM/COLD_NODE),
+        //   [7+p] footer (= header 副本).
+        // 内核 sum_blk_addr = cp_base + cp_pack_total - (base+1) + type:
+        //   NR_CURSEG_PERSIST_TYPE=6: DATA(type 0..2) @ base+total-7+type = 1+p..3+p
+        //   NR_CURSEG_NODE_TYPE=3:    NODE(type 0..2) @ base+total-4+type = 4+p..6+p
+        // 若 total=6, DATA HOT @ base-1 (越界读 nat_bits) → -117.
+        let cp_pack_total = 8 + cp_payload;
 
-        // compact summary 两份共用 (NAT/SIT journal 内容一致)
+        // compact summary 两份共用 (NAT/SIT journal 内容一致);
+        // normal 路径下它同时充当 DATA HOT summary block (sum_blk_addr 算到同一位置).
         let compact_summary = self.build_compact_summary();
 
-        // 3 个 node summary 块: 各 curseg node 段的 SSA summary 快照。
-        // 内核 read_normal_summaries(CURSEG_HOT_NODE..COLD_NODE) 从 CP pack 末尾读它们。
+        // 3 个 DATA summary 块 (WARM/COLD; HOT 复用 compact_summary 位置) +
+        // 3 个 NODE summary 块: 各 curseg 段的 SSA summary 快照。
+        // 内核 read_normal_summaries 从 CP pack 末尾按 sum_blk_addr 读它们。
+        let data_summaries: Vec<[u8; F2FS_BLKSIZE]> = (0..3)
+            .map(|i| {
+                self.ssa
+                    .build_curseg_summary(curseg.data_segno[i] as usize, false)
+            })
+            .collect();
         let node_summaries: Vec<[u8; F2FS_BLKSIZE]> = (0..3)
             .map(|i| {
                 self.ssa
@@ -756,9 +766,15 @@ impl F2fsBuilder {
         let cp0_header = self.build_cp_header(1, &curseg, &nat_bitmap, &sit_bitmap, cp_pack_total);
         let cp0_base = self.layout.cp_blkaddr;
         self.write_block_at(cp0_base, &cp0_header)?;
+        // [1+p] compact summary / DATA HOT summary
         self.write_block_at(cp0_base + 1 + cp_payload, &compact_summary)?;
+        // [2+p] DATA WARM, [3+p] DATA COLD
+        for (i, sum) in data_summaries.iter().enumerate().skip(1) {
+            self.write_block_at(cp0_base + 1 + cp_payload + i as u32, sum)?;
+        }
+        // [4+p..6+p] NODE HOT/WARM/COLD
         for (i, sum) in node_summaries.iter().enumerate() {
-            self.write_block_at(cp0_base + 2 + cp_payload + i as u32, sum)?;
+            self.write_block_at(cp0_base + 4 + cp_payload + i as u32, sum)?;
         }
         self.write_block_at(cp0_base + cp_pack_total - 1, &cp0_header)?;
 
@@ -767,8 +783,11 @@ impl F2fsBuilder {
         let cp1_base = self.layout.cp_blkaddr + blocks_per_seg;
         self.write_block_at(cp1_base, &cp1_header)?;
         self.write_block_at(cp1_base + 1 + cp_payload, &compact_summary)?;
+        for (i, sum) in data_summaries.iter().enumerate().skip(1) {
+            self.write_block_at(cp1_base + 1 + cp_payload + i as u32, sum)?;
+        }
         for (i, sum) in node_summaries.iter().enumerate() {
-            self.write_block_at(cp1_base + 2 + cp_payload + i as u32, sum)?;
+            self.write_block_at(cp1_base + 4 + cp_payload + i as u32, sum)?;
         }
         self.write_block_at(cp1_base + cp_pack_total - 1, &cp1_header)?;
 
