@@ -97,12 +97,12 @@ impl SitManager {
 
     /// SIT 版本 bitmap (标记哪些 SIT 块有效, 供 checkpoint 使用)。
     pub fn version_bitmap(&self) -> Vec<u8> {
+        // mkfs 初始镜像: 所有 SIT block 用 base 副本, sit_bitmap 全零。
+        // 内核 current_sit_addr 按 bit 选 base(bit=0) / mirror(bit=1);
+        // 若误设 bit, 内核读 mirror 副本, 该副本可能指向不同 curseg 段,
+        // 导致 check_block_count 后 curseg 校验失败 (-117 EFSCORRUPTED)。
         let needed = self.sit_blocks_needed();
         let size = (needed as usize).div_ceil(8);
-        let mut bm = vec![0u8; size];
-        for i in 0..needed {
-            bm[i as usize / 8] |= 1 << (i % 8);
-        }
-        bm
+        vec![0u8; size]
     }
 }
