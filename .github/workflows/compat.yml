@@ -81,6 +81,35 @@ jobs:
           set -e
           ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
+          # 诊断: 生成 gold64 (官方), 全元数据区 block-by-block 对比
+          echo "=== generate gold64 + full metadata diff ==="
+          truncate -s $IMG_SIZE /tmp/gold64.raw
+          mkfs.f2fs -g android /tmp/gold64.raw >/dev/null 2>&1
+          sload.f2fs -f fixture -t $MOUNT_POINT /tmp/gold64.raw >/dev/null 2>&1
+          python3 -c "
+          g=open('/tmp/gold64.raw','rb').read()
+          o=open('A.raw','rb').read()
+          BS=4096
+          # 元数据区 0..main(4096)
+          diff_blocks=[]
+          for blk in range(0,4096):
+              if g[blk*BS:blk*BS+BS]!=o[blk*BS:blk*BS+BS]:
+                  # 首个差异字节
+                  for i in range(BS):
+                      if g[blk*BS+i]!=o[blk*BS+i]:
+                          diff_blocks.append((blk,i,g[blk*BS+i],o[blk*BS+i])); break
+          print(f'  total diff blocks in metadata: {len(diff_blocks)}')
+          from collections import Counter
+          c=Counter()
+          for blk,off,gv,ov in diff_blocks:
+              region='SB' if blk==0 else 'CP0' if 512<=blk<1024 else 'CP1' if 1024<=blk<1536 else 'SIT' if 1536<=blk<2560 else 'NAT' if 2560<=blk<3584 else 'SSA' if 3584<=blk<4096 else '?'
+              c[region]+=1
+          print(f'  by region: {dict(c)}')
+          # 输出每个差异块的详情 (前 40)
+          for blk,off,gv,ov in diff_blocks[:40]:
+              region='SB' if blk==0 else 'CP0' if 512<=blk<1024 else 'CP1' if 1024<=blk<1536 else 'SIT' if 1536<=blk<2560 else 'NAT' if 2560<=blk<3584 else 'SSA' if 3584<=blk<4096 else '?'
+              print(f'  {region} blk{blk} @{off}: gold={gv:#04x} ours={ov:#04x}')
+          "
           fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
       - if: always()
