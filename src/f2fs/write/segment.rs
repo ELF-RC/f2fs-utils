@@ -27,10 +27,14 @@ impl SegmentAllocator {
             allocated_blocks: 0,
             used_segments: HashSet::new(),
         };
-        // 各类型分配不同起始 segment (0..6)
-        for i in 0..NR_CURSEG_TYPE {
-            alloc.current_segments[i] = i as u32;
-            alloc.used_segments.insert(i as u32);
+        // 对齐官方 mkfs -g android 的 curseg 分配顺序: node 段在前, data 段在后。
+        //   CURSEG_HOT_NODE(3)=segno0, WARM_NODE(4)=1, COLD_NODE(5)=2
+        //   CURSEG_HOT_DATA(0)=segno3, WARM_DATA(1)=4, COLD_DATA(2)=5
+        // current_segments[i] 按 CURSEG 常量索引 (0..5 = HotData..ColdNode).
+        let segno_for = [3u32, 4, 5, 0, 1, 2];
+        for (i, &seg) in segno_for.iter().enumerate() {
+            alloc.current_segments[i] = seg;
+            alloc.used_segments.insert(seg);
         }
         alloc
     }

@@ -698,11 +698,8 @@ impl F2fsBuilder {
         let offset = u64::from(self.layout.sit_blkaddr) * F2FS_BLKSIZE as u64;
         self.writer.seek(SeekFrom::Start(offset))?;
         self.writer.write_all(&data)?;
-        let half = self.layout.segment_count_sit / 2 * DEFAULT_BLOCKS_PER_SEGMENT;
-        self.writer.seek(SeekFrom::Start(
-            offset + u64::from(half) * F2FS_BLKSIZE as u64,
-        ))?;
-        self.writer.write_all(&data)?;
+        // 官方 mkfs -g android 不写 SIT mirror 副本 (sit_bitmap=0 时内核只读 base;
+        // mirror 区保持全零)。去掉镜像写入以对齐官方镜像字节布局。
         Ok(())
     }
 
