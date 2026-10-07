@@ -83,9 +83,13 @@ jobs:
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
           # 诊断: 生成 gold64 (官方), 全元数据区 block-by-block 对比
           echo "=== generate gold64 + full metadata diff ==="
+          set +e
           truncate -s $IMG_SIZE /tmp/gold64.raw
           mkfs.f2fs -g android /tmp/gold64.raw >/dev/null 2>&1
           sload.f2fs -f fixture -t $MOUNT_POINT /tmp/gold64.raw >/dev/null 2>&1
+          SLERR=$?
+          set -e
+          echo "gold64 mkfs+sload done (sload exit $SLERR, ok if gold64 mountable)"
           python3 -c "
           g=open('/tmp/gold64.raw','rb').read()
           o=open('A.raw','rb').read()
