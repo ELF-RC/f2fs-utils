@@ -43,10 +43,16 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      # Cargo forbids '.' in binary names; rename to Android's extract.f2fs
-      - name: Rename artifact
-        run: cp target/${{ matrix.target }}/release/extract_f2fs target/${{ matrix.target }}/release/extract.f2fs
+      # Cargo forbids '.' in binary names; rename to Android's extract.f2fs / mkfs.f2fs
+      - name: Rename artifacts
+        run: |
+          cp target/${{ matrix.target }}/release/extract_f2fs target/${{ matrix.target }}/release/extract.f2fs
+          cp target/${{ matrix.target }}/release/mkfs_f2fs target/${{ matrix.target }}/release/mkfs.f2fs
       - uses: actions/upload-artifact@v4
         with:
           name: extract.f2fs-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/extract.f2fs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkfs.f2fs-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/mkfs.f2fs
