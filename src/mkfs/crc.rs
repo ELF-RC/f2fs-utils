@@ -3,7 +3,7 @@
 //! F2FS 使用标准 CRC32 (poly 0xEDB88320), 以 `F2FS_MAGIC` 为初始值,
 //! 最终结果不取反。
 
-use crate::f2fs::consts::F2FS_MAGIC;
+use crate::extract::consts::F2FS_MAGIC;
 
 /// F2FS CRC32: 以 magic 为初值, 不对结果取反。
 pub fn crc32(data: &[u8]) -> u32 {

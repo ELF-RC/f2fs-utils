@@ -1,11 +1,11 @@
 //! SSA (segment summary area) 管理器。
 
-use crate::f2fs::consts::F2FS_BLKSIZE;
-use crate::f2fs::error::Result;
-use crate::f2fs::write::consts::{
+use crate::extract::consts::F2FS_BLKSIZE;
+use crate::extract::error::Result;
+use crate::mkfs::consts::{
     DEFAULT_BLOCKS_PER_SEGMENT, SUM_FOOTER_SIZE, SUM_TYPE_DATA, SUM_TYPE_NODE, SUMMARY_SIZE,
 };
-use crate::f2fs::write::types::Summary;
+use crate::mkfs::types::Summary;
 
 const ENTRIES_IN_SUM: usize = F2FS_BLKSIZE / 8;
 

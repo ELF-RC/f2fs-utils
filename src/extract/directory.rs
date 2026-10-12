@@ -1,9 +1,9 @@
 //! 目录项解析: 常规 dentry block 与 inline dentry。
 
-use crate::f2fs::consts::*;
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::types::{DirEntry, Inode, Nid};
-use crate::f2fs::volume::F2fsVolume;
+use crate::extract::consts::*;
+use crate::extract::error::{F2fsError, Result};
+use crate::extract::types::{DirEntry, Inode, Nid};
+use crate::extract::volume::F2fsVolume;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek};
 

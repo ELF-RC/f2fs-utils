@@ -1,7 +1,7 @@
 //! F2FS 写入侧类型: 供各构建器使用的结构定义。
 
-use crate::f2fs::types::Block;
-use crate::f2fs::write::consts::*;
+use crate::extract::types::Block;
+use crate::mkfs::consts::*;
 
 /// segment 分配语义类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

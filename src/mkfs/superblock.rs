@@ -1,10 +1,10 @@
 //! 超级块构建器: 布局计算与序列化。
 
-use crate::f2fs::consts::{F2FS_MAGIC, F2FS_ROOT_INO};
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::write::consts::*;
-use crate::f2fs::write::crc::crc32;
-use crate::f2fs::write::types::{F2fsFeatures, SuperblockLayout};
+use crate::extract::consts::{F2FS_MAGIC, F2FS_ROOT_INO};
+use crate::extract::error::{F2fsError, Result};
+use crate::mkfs::consts::*;
+use crate::mkfs::crc::crc32;
+use crate::mkfs::types::{F2fsFeatures, SuperblockLayout};
 
 fn log2_u32(val: u32) -> u32 {
     if val == 0 { 0 } else { val.ilog2() }
@@ -29,7 +29,7 @@ impl SuperblockBuilder {
     pub fn new(image_size: u64) -> Self {
         Self {
             image_size,
-            block_size: crate::f2fs::consts::F2FS_BLKSIZE as u32,
+            block_size: crate::extract::consts::F2FS_BLKSIZE as u32,
             sector_size: DEFAULT_SECTOR_SIZE,
             blocks_per_seg: DEFAULT_BLOCKS_PER_SEGMENT,
             segs_per_sec: DEFAULT_SEGMENTS_PER_SECTION,
@@ -75,7 +75,7 @@ impl SuperblockBuilder {
         let block_count = total_sectors >> log_sectors_per_block;
 
         // segment0 起始: zone 对齐
-        let zone_align_start_offset = (2 * crate::f2fs::consts::F2FS_BLKSIZE as u64)
+        let zone_align_start_offset = (2 * crate::extract::consts::F2FS_BLKSIZE as u64)
             .div_ceil(zone_size_bytes)
             * zone_size_bytes;
         let segment0_blkaddr = (zone_align_start_offset / blk_size_bytes) as u32;
@@ -142,7 +142,7 @@ impl SuperblockBuilder {
         let max_sit_bitmap =
             sit_bitmap_size.min((CP_CHKSUM_OFFSET - CHECKPOINT_HEADER_SIZE) as u32);
         let cp_payload = if max_sit_bitmap > (CP_CHKSUM_OFFSET - CHECKPOINT_HEADER_SIZE) as u32 {
-            max_sit_bitmap.div_ceil(crate::f2fs::consts::F2FS_BLKSIZE as u32)
+            max_sit_bitmap.div_ceil(crate::extract::consts::F2FS_BLKSIZE as u32)
         } else {
             0
         };

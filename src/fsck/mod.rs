@@ -8,16 +8,16 @@
 //! 5. Inode 树: 从根递归遍历, 校验 inode CRC + mode/size/blocks + dentry 位图
 //! 6. 交叉校验: CP 计数 vs 实际, SIT 位图 vs NAT/inode 引用
 
-use crate::f2fs::consts::{
+use crate::extract::consts::{
     F2FS_BLKSIZE, F2FS_MAGIC, F2FS_ROOT_INO, NAT_ENTRY_SIZE,
     CP_COMPACT_SUM_FLAG,
 };
-use crate::f2fs::write::consts::{
+use crate::mkfs::consts::{
     CP_CHKSUM_OFFSET, CP_NAT_BITS_FLAG, CP_UMOUNT_FLAG, SIT_ENTRY_SIZE,
 };
-use crate::f2fs::write::crc::crc32;
-use crate::f2fs::F2fsVolume;
-use crate::f2fs::types::{Inode, Nid};
+use crate::mkfs::crc::crc32;
+use crate::extract::F2fsVolume;
+use crate::extract::types::{Inode, Nid};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs::File;
@@ -465,7 +465,7 @@ fn walk_inode(
     if sb.features & 0x20 != 0 {
         let footer_ino = le32(&node, 4076);
         let stored_crc = le32(&node, 368);
-        let calc = crate::f2fs::write::crc::inode_checksum(footer_ino, &node);
+        let calc = crate::mkfs::crc::inode_checksum(footer_ino, &node);
         if stored_crc == calc {
             // CRC ok
         } else {

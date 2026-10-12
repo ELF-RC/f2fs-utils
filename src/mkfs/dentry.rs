@@ -1,11 +1,11 @@
 //! 目录块构建器: 常规 dentry block、inline dentry、TEA 哈希。
 
-use crate::f2fs::consts::{F2FS_BLKSIZE, F2FS_NAME_LEN, F2FS_SLOT_LEN};
-use crate::f2fs::write::consts::{
+use crate::extract::consts::{F2FS_BLKSIZE, F2FS_NAME_LEN, F2FS_SLOT_LEN};
+use crate::mkfs::consts::{
     DENTRY_BITMAP_SIZE, DENTRY_RESERVED_SIZE, F2FS_DIR_ENTRY_SIZE, INLINE_DENTRY_BITMAP_SIZE,
     INLINE_RESERVED_SIZE, NR_DENTRY_IN_BLOCK_W, NR_INLINE_DENTRY_W,
 };
-use crate::f2fs::write::types::{DirEntryRaw, FileType};
+use crate::mkfs::types::{DirEntryRaw, FileType};
 
 /// 目录项信息 (构建期)。
 #[derive(Debug, Clone)]

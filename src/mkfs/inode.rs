@@ -1,15 +1,15 @@
 //! inode / node 块构建器。
 
-use crate::f2fs::consts::{
+use crate::extract::consts::{
     DEF_ADDRS_PER_BLOCK, DEF_ADDRS_PER_INODE, F2FS_BLKSIZE, F2FS_DATA_EXIST, F2FS_EXTRA_ATTR,
     F2FS_INLINE_DATA, F2FS_INLINE_DENTRY, F2FS_INLINE_XATTR, F2FS_NAME_LEN,
     F2FS_XATTR_INDEX_SECURITY, NODE_FOOTER_SIZE, S_IFDIR, S_IFLNK, S_IFREG,
 };
-use crate::f2fs::write::consts::{
+use crate::mkfs::consts::{
     COMPRESS_LZ4, DEFAULT_INLINE_XATTR_SIZE, EXTRA_ISIZE, NIDS_PER_BLOCK_W,
 };
-use crate::f2fs::write::crc::inode_checksum;
-use crate::f2fs::write::types::{FileType, NodeFooter};
+use crate::mkfs::crc::inode_checksum;
+use crate::mkfs::types::{FileType, NodeFooter};
 
 /// inline xattr 条目 (写入侧)。
 #[derive(Debug, Clone)]

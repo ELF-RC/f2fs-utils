@@ -1,9 +1,9 @@
 //! SIT (segment info table) 管理器。
 
-use crate::f2fs::consts::F2FS_BLKSIZE;
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::write::consts::{SIT_ENTRY_PER_BLOCK_W, SIT_ENTRY_SIZE};
-use crate::f2fs::write::types::SitEntry;
+use crate::extract::consts::F2FS_BLKSIZE;
+use crate::extract::error::{F2fsError, Result};
+use crate::mkfs::consts::{SIT_ENTRY_PER_BLOCK_W, SIT_ENTRY_SIZE};
+use crate::mkfs::types::SitEntry;
 
 #[derive(Debug)]
 pub struct SitManager {
@@ -19,7 +19,7 @@ impl SitManager {
         Self {
             entries,
             sit_blkaddr,
-            blocks_per_seg: crate::f2fs::write::consts::DEFAULT_BLOCKS_PER_SEGMENT,
+            blocks_per_seg: crate::mkfs::consts::DEFAULT_BLOCKS_PER_SEGMENT,
             main_blkaddr,
         }
     }

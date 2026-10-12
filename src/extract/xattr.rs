@@ -1,9 +1,9 @@
 //! 扩展属性读取: inline xattr 与 xattr node。
 
-use crate::f2fs::consts::*;
-use crate::f2fs::error::Result;
-use crate::f2fs::types::{Inode, Nid, XattrEntry};
-use crate::f2fs::volume::F2fsVolume;
+use crate::extract::consts::*;
+use crate::extract::error::Result;
+use crate::extract::types::{Inode, Nid, XattrEntry};
+use crate::extract::volume::F2fsVolume;
 use std::io::{Read, Seek};
 
 impl<R: Read + Seek + Send> F2fsVolume<R> {

@@ -2,8 +2,8 @@
 //!
 //! 所有多字节字段为小端序,布局依据 `include/linux/f2fs_fs.h`。
 
-use crate::f2fs::consts::*;
-use crate::f2fs::error::{F2fsError, Result};
+use crate::extract::consts::*;
+use crate::extract::error::{F2fsError, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 

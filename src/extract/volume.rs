@@ -2,9 +2,9 @@
 //!
 //! 支持任意 `Read + Seek` 数据源 (普通文件或稀疏镜像虚拟流)。
 
-use crate::f2fs::consts::*;
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::types::{Block, Inode, NatEntry, Nid, Superblock};
+use crate::extract::consts::*;
+use crate::extract::error::{F2fsError, Result};
+use crate::extract::types::{Block, Inode, NatEntry, Nid, Superblock};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

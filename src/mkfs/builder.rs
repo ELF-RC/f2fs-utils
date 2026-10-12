@@ -9,23 +9,23 @@
 //! 5. 写入双副本 checkpoint (含 compact summary)
 //! 6. 写入超级块
 
-use crate::f2fs::consts::{COMPRESS_ADDR, F2FS_BLKSIZE, F2FS_ROOT_INO, NULL_ADDR};
-use crate::f2fs::types::Nid;
-use crate::f2fs::write::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
-use crate::f2fs::write::config::{FsConfig, SelinuxContexts};
-use crate::f2fs::write::consts::{
+use crate::extract::consts::{COMPRESS_ADDR, F2FS_BLKSIZE, F2FS_ROOT_INO, NULL_ADDR};
+use crate::extract::types::Nid;
+use crate::mkfs::checkpoint::{CheckpointBuilder, NAT_JOURNAL_ENTRY_SIZE, SUM_JOURNAL_SIZE};
+use crate::mkfs::config::{FsConfig, SelinuxContexts};
+use crate::mkfs::consts::{
     COMPRESS_HEADER_SIZE, CP_CHKSUM_OFFSET, CP_NAT_BITS_FLAG, CP_UMOUNT_FLAG,
     DEFAULT_BLOCKS_PER_SEGMENT, MAX_INLINE_DATA_SIZE, NR_CURSEG_TYPE,
 };
-use crate::f2fs::write::dentry::{DentryBlockBuilder, DentryInfo};
-use crate::f2fs::write::inode::InodeBuilder;
-use crate::f2fs::write::nat::NatManager;
-use crate::f2fs::write::segment::SegmentAllocator;
-use crate::f2fs::write::sit::SitManager;
-use crate::f2fs::write::ssa::SsaManager;
-use crate::f2fs::write::superblock::SuperblockBuilder;
-use crate::f2fs::write::types::FileType;
-use crate::f2fs::write::types::{CursegInfo, F2fsFeatures, SegType, SuperblockLayout};
+use crate::mkfs::dentry::{DentryBlockBuilder, DentryInfo};
+use crate::mkfs::inode::InodeBuilder;
+use crate::mkfs::nat::NatManager;
+use crate::mkfs::segment::SegmentAllocator;
+use crate::mkfs::sit::SitManager;
+use crate::mkfs::ssa::SsaManager;
+use crate::mkfs::superblock::SuperblockBuilder;
+use crate::mkfs::types::FileType;
+use crate::mkfs::types::{CursegInfo, F2fsFeatures, SegType, SuperblockLayout};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -497,7 +497,7 @@ impl F2fsBuilder {
 
             // 压缩获益: 构造 24B 头 + 载荷, 切成 phys_blks 个物理块
             let clen = compressed.len() as u32;
-            let chksum = crate::f2fs::write::crc::crc32(&padded);
+            let chksum = crate::mkfs::crc::crc32(&padded);
             let mut payload = Vec::with_capacity(header_and_payload_len);
             payload.extend_from_slice(&clen.to_le_bytes());
             payload.extend_from_slice(&chksum.to_le_bytes());
@@ -609,27 +609,27 @@ impl F2fsBuilder {
         let pairs = [
             (
                 ci.node_segno[0],
-                crate::f2fs::write::consts::CURSEG_HOT_NODE as u16,
+                crate::mkfs::consts::CURSEG_HOT_NODE as u16,
             ),
             (
                 ci.node_segno[1],
-                crate::f2fs::write::consts::CURSEG_WARM_NODE as u16,
+                crate::mkfs::consts::CURSEG_WARM_NODE as u16,
             ),
             (
                 ci.node_segno[2],
-                crate::f2fs::write::consts::CURSEG_COLD_NODE as u16,
+                crate::mkfs::consts::CURSEG_COLD_NODE as u16,
             ),
             (
                 ci.data_segno[0],
-                crate::f2fs::write::consts::CURSEG_HOT_DATA as u16,
+                crate::mkfs::consts::CURSEG_HOT_DATA as u16,
             ),
             (
                 ci.data_segno[1],
-                crate::f2fs::write::consts::CURSEG_WARM_DATA as u16,
+                crate::mkfs::consts::CURSEG_WARM_DATA as u16,
             ),
             (
                 ci.data_segno[2],
-                crate::f2fs::write::consts::CURSEG_COLD_DATA as u16,
+                crate::mkfs::consts::CURSEG_COLD_DATA as u16,
             ),
         ];
         for &(segno, seg_type) in &pairs {
@@ -929,7 +929,7 @@ impl F2fsBuilder {
         // 3. footer: summary 类型 + CRC32
         let footer = F2FS_BLKSIZE - 5;
         buf[footer] = 0; // SUM_TYPE_DATA (compact summary 块用 DATA 类型)
-        let crc = crate::f2fs::write::crc::crc32(&buf[..=footer]);
+        let crc = crate::mkfs::crc::crc32(&buf[..=footer]);
         buf[footer + 1..footer + 5].copy_from_slice(&crc.to_le_bytes());
         buf
     }
@@ -938,7 +938,7 @@ impl F2fsBuilder {
         let needed = self
             .nat
             .next_free_nid()
-            .div_ceil(crate::f2fs::write::consts::NAT_ENTRY_PER_BLOCK_W as u32);
+            .div_ceil(crate::mkfs::consts::NAT_ENTRY_PER_BLOCK_W as u32);
         let size = (needed as usize).div_ceil(8);
         let mut bm = vec![0u8; size];
         for i in 0..needed {
@@ -966,7 +966,7 @@ pub fn build_f2fs_image(cfg: MkfsConfig) -> Result<()> {
     let mut builder = F2fsBuilder::new(cfg)?;
     builder.build()?;
     if sparse {
-        crate::f2fs::write::sparse::convert_file(&output_path)?;
+        crate::mkfs::sparse::convert_file(&output_path)?;
     }
     Ok(())
 }

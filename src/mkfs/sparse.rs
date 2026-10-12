@@ -5,7 +5,7 @@
 //!
 //! 格式: 28B sparse header + 若干 (12B chunk header + data)。
 
-use crate::f2fs::consts::F2FS_BLKSIZE;
+use crate::extract::consts::F2FS_BLKSIZE;
 use anyhow::{Context, Result};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};

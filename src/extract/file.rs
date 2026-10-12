@@ -1,12 +1,12 @@
 //! 文件数据读取: inline data、直接/间接/二级间接块链、LZ4 压缩簇。
 
-use crate::f2fs::consts::{
+use crate::extract::consts::{
     DEF_ADDRS_PER_BLOCK, DEF_ADDRS_PER_INODE, F2FS_BLKSIZE, F2FS_INLINE_DATA, NIDS_PER_INODE,
     NODE_FOOTER_SIZE,
 };
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::types::{BlockAddr, Inode, Nid};
-use crate::f2fs::volume::F2fsVolume;
+use crate::extract::error::{F2fsError, Result};
+use crate::extract::types::{BlockAddr, Inode, Nid};
+use crate::extract::volume::F2fsVolume;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek};
 

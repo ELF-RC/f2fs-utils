@@ -1,10 +1,10 @@
 //! Checkpoint 构建器。
 
-use crate::f2fs::consts::F2FS_BLKSIZE;
-use crate::f2fs::write::consts::{
+use crate::extract::consts::F2FS_BLKSIZE;
+use crate::mkfs::consts::{
     CP_CHKSUM_OFFSET, CP_COMPACT_SUM_FLAG_W, CP_UMOUNT_FLAG, F2FS_FIRST_INO,
 };
-use crate::f2fs::write::crc::crc32;
+use crate::mkfs::crc::crc32;
 
 const MAX_ACTIVE_NODE_LOGS: usize = 8;
 const MAX_ACTIVE_DATA_LOGS: usize = 8;

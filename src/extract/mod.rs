@@ -1,6 +1,13 @@
 //! F2FS 镜像分解工作流: 遍历文件树、落盘文件、生成 Android
 //! `*_fs_config` 与 `*_file_contexts`。
 //!
+//! 本模块同时承载 F2FS 磁盘格式读取层:
+//! - consts / error / types: 常量与结构解析
+//! - volume: 卷读取后端 (超级块 / checkpoint / NAT)
+//! - directory: 目录项解析
+//! - file: 文件数据读取 (含 LZ4 压缩簇解压)
+//! - xattr: 扩展属性解析
+//!
 //! 约定 (与用户示例一致):
 //! - 输出目录 (`-o`) 直接承载提取出的文件树 (不再嵌套分区子目录)。
 //! - 配置输出有两种方式 (可混用, 逐文件独立):
@@ -12,10 +19,20 @@
 //! - fs_config:   `<partition>/<relpath> <uid> <gid> <octal_mode> [target]`
 //! - file_contexts: `/<partition>/<relpath> <selinux_context>`
 
-use crate::f2fs::F2fsVolume;
-use crate::f2fs::consts::{F2FS_FT_DIR, F2FS_FT_REG_FILE, F2FS_FT_SYMLINK, F2FS_ROOT_INO};
-use crate::f2fs::types::{Inode, Nid};
-use anyhow::{Context, Result, anyhow};
+pub mod consts;
+pub mod directory;
+pub mod error;
+pub mod file;
+pub mod types;
+pub mod volume;
+pub mod xattr;
+
+pub use consts::*;
+pub use error::{F2fsError, Result};
+pub use types::{Block, BlockAddr, DirEntry, Inode, NatEntry, Nid, Superblock, XattrEntry};
+pub use volume::F2fsVolume;
+
+use anyhow::{Context, Result as AnyResult, anyhow};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -46,7 +63,7 @@ struct FsEntry {
 }
 
 /// 提取入口。
-pub fn extract(cfg: &ExtractConfig) -> Result<()> {
+pub fn extract(cfg: &ExtractConfig) -> AnyResult<()> {
     let volume = F2fsVolume::open(&cfg.input_image)
         .with_context(|| format!("failed to open F2FS image: {}", cfg.input_image))?;
 
@@ -108,7 +125,7 @@ fn walk(
     partition: &str,
     fs_entries: &mut Vec<FsEntry>,
     ctx_entries: &mut BTreeMap<String, String>,
-) -> Result<()> {
+) -> AnyResult<()> {
     let inode = vol.read_inode(nid)?;
 
     // 当前层目录自身 (非根) 的配置: rel 非空表示非根
@@ -217,7 +234,7 @@ fn record_context(
 }
 
 /// 写 fs_config 到指定文件路径。
-fn write_fs_config(path: &Path, partition: &str, entries: &[FsEntry]) -> Result<()> {
+fn write_fs_config(path: &Path, partition: &str, entries: &[FsEntry]) -> AnyResult<()> {
     let mut f =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
 
@@ -246,7 +263,7 @@ fn write_file_contexts(
     path: &Path,
     partition: &str,
     entries: &BTreeMap<String, String>,
-) -> Result<()> {
+) -> AnyResult<()> {
     let mut f =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
 
@@ -257,7 +274,7 @@ fn write_file_contexts(
 }
 
 /// 将 name 接到 rel 之后, 做基本的路径净化 (拒绝 .. 与绝对路径)。
-fn sanitize_join(rel: &Path, name: &str) -> Result<PathBuf> {
+fn sanitize_join(rel: &Path, name: &str) -> AnyResult<PathBuf> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') {
         return Err(anyhow!("invalid entry name: {name:?}"));
     }
@@ -266,7 +283,7 @@ fn sanitize_join(rel: &Path, name: &str) -> Result<PathBuf> {
 
 /// 跨平台创建符号链接 (仅 unix)。
 #[cfg(unix)]
-fn create_symlink(target: &str, link_path: &Path) -> Result<()> {
+fn create_symlink(target: &str, link_path: &Path) -> AnyResult<()> {
     use std::os::unix::fs::symlink;
     if link_path.exists() {
         fs::remove_file(link_path)?;
@@ -276,6 +293,6 @@ fn create_symlink(target: &str, link_path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn create_symlink(_target: &str, _link_path: &Path) -> Result<()> {
+fn create_symlink(_target: &str, _link_path: &Path) -> AnyResult<()> {
     Err(anyhow!("symlinks are not supported on this platform"))
 }

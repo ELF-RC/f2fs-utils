@@ -26,6 +26,5 @@
 #![allow(clippy::too_many_lines)]
 
 pub mod extract;
-pub mod f2fs;
 pub mod fsck;
 pub mod mkfs;

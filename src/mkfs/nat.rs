@@ -1,11 +1,11 @@
 //! NAT (node address table) 管理器。
 
-use crate::f2fs::consts::{F2FS_BLKSIZE, F2FS_ROOT_INO, NAT_ENTRY_SIZE};
-use crate::f2fs::types::{Block, Nid};
-use crate::f2fs::write::consts::{
+use crate::extract::consts::{F2FS_BLKSIZE, F2FS_ROOT_INO, NAT_ENTRY_SIZE};
+use crate::extract::types::{Block, Nid};
+use crate::mkfs::consts::{
     F2FS_FIRST_INO, F2FS_META_INO, F2FS_NODE_INO, NAT_ENTRY_PER_BLOCK_W,
 };
-use crate::f2fs::write::types::NatEntryW;
+use crate::mkfs::types::NatEntryW;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]

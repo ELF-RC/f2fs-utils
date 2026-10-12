@@ -1,8 +1,8 @@
 //! Segment 分配器: 管理 6 类 current segment 的块分配。
 
-use crate::f2fs::error::{F2fsError, Result};
-use crate::f2fs::write::consts::{DEFAULT_BLOCKS_PER_SEGMENT, NR_CURSEG_TYPE};
-use crate::f2fs::write::types::{CursegInfo, SegType};
+use crate::extract::error::{F2fsError, Result};
+use crate::mkfs::consts::{DEFAULT_BLOCKS_PER_SEGMENT, NR_CURSEG_TYPE};
+use crate::mkfs::types::{CursegInfo, SegType};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -101,24 +101,24 @@ impl SegmentAllocator {
     pub fn get_curseg_info(&self) -> CursegInfo {
         CursegInfo {
             node_segno: [
-                self.current_segments[crate::f2fs::write::consts::CURSEG_HOT_NODE],
-                self.current_segments[crate::f2fs::write::consts::CURSEG_WARM_NODE],
-                self.current_segments[crate::f2fs::write::consts::CURSEG_COLD_NODE],
+                self.current_segments[crate::mkfs::consts::CURSEG_HOT_NODE],
+                self.current_segments[crate::mkfs::consts::CURSEG_WARM_NODE],
+                self.current_segments[crate::mkfs::consts::CURSEG_COLD_NODE],
             ],
             node_blkoff: [
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_HOT_NODE],
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_WARM_NODE],
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_COLD_NODE],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_HOT_NODE],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_WARM_NODE],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_COLD_NODE],
             ],
             data_segno: [
-                self.current_segments[crate::f2fs::write::consts::CURSEG_HOT_DATA],
-                self.current_segments[crate::f2fs::write::consts::CURSEG_WARM_DATA],
-                self.current_segments[crate::f2fs::write::consts::CURSEG_COLD_DATA],
+                self.current_segments[crate::mkfs::consts::CURSEG_HOT_DATA],
+                self.current_segments[crate::mkfs::consts::CURSEG_WARM_DATA],
+                self.current_segments[crate::mkfs::consts::CURSEG_COLD_DATA],
             ],
             data_blkoff: [
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_HOT_DATA],
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_WARM_DATA],
-                self.next_blkoff[crate::f2fs::write::consts::CURSEG_COLD_DATA],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_HOT_DATA],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_WARM_DATA],
+                self.next_blkoff[crate::mkfs::consts::CURSEG_COLD_DATA],
             ],
         }
     }
