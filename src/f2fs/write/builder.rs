@@ -147,11 +147,13 @@ impl F2fsBuilder {
         let fs_config = cfg
             .fs_config
             .as_ref()
-            .and_then(|p| FsConfig::from_file(p).ok());
+            .map(|p| FsConfig::from_file(p).with_context(|| format!("failed to parse fs_config: {}", p.display())))
+            .transpose()?;
         let selinux = cfg
             .file_contexts
             .as_ref()
-            .and_then(|p| SelinuxContexts::from_file(p).ok());
+            .map(|p| SelinuxContexts::from_file(p).with_context(|| format!("failed to parse file_contexts: {}", p.display())))
+            .transpose()?;
 
         let compression = cfg.compression;
         let compress_algo = cfg.compress_algo;
@@ -191,14 +193,15 @@ impl F2fsBuilder {
         self.create_root_dir()?;
 
         // 2. 递归装载源目录
-        if self.cfg.source_dir.exists() {
-            self.load_directory(
-                &self.cfg.source_dir.clone(),
-                F2FS_ROOT_INO,
-                &self.cfg.mount_point.clone(),
-                0,
-            )?;
+        if !self.cfg.source_dir.exists() {
+            anyhow::bail!("source directory does not exist: {}", self.cfg.source_dir.display());
         }
+        self.load_directory(
+            &self.cfg.source_dir.clone(),
+            F2FS_ROOT_INO,
+            &self.cfg.mount_point.clone(),
+            0,
+        )?;
 
         // 3. 写入所有待写目录的 inode (此时已知 links / dentries)
         self.flush_pending_dirs()?;

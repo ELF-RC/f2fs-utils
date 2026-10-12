@@ -494,22 +494,34 @@ fn walk_inode(
 
     // 块地址引用收集 (仅非 inline 文件)
     if !inode.is_dir() && (inode.inline & 0x02 == 0) && inode.size > 0 {
-        let blocks = vol.read_data_blocks(&inode, nid).unwrap_or_default();
-        for blk in &blocks {
-            // 无法直接知道 blk 的物理地址, 但已通过 NAT 间接校验
-            let _ = blk;
+        match vol.read_data_blocks(&inode, nid) {
+            Ok(blocks) => {
+                for blk in &blocks {
+                    // 无法直接知道 blk 的物理地址, 但已通过 NAT 间接校验
+                    let _ = blk;
+                }
+            }
+            Err(e) => {
+                stats.err(format!("inode {}: failed to read data blocks: {e}", nid.0));
+            }
         }
     }
 
     // 目录: 递归遍历子项
     if inode.is_dir() {
-        let entries = vol.read_dir(&inode, nid).unwrap_or_default();
-        for e in &entries {
-            // 记录 dentry 指向的 nid
-            refs.insert(e.nid.0);
-            // 递归 (限制深度避免无限递归)
-            if depth < 64 {
-                walk_inode(vol, sb, e.nid, stats, refs, visited, depth + 1)?;
+        match vol.read_dir(&inode, nid) {
+            Ok(entries) => {
+                for e in &entries {
+                    // 记录 dentry 指向的 nid
+                    refs.insert(e.nid.0);
+                    // 递归 (限制深度避免无限递归)
+                    if depth < 64 {
+                        walk_inode(vol, sb, e.nid, stats, refs, visited, depth + 1)?;
+                    }
+                }
+            }
+            Err(e) => {
+                stats.err(format!("inode {}: failed to read directory: {e}", nid.0));
             }
         }
     }
