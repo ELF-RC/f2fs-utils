@@ -79,7 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          ./target/release/mkfs_f2fs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+          ./target/release/f2fs-utils mkfs -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/A.raw > A_mkfs.log 2>&1
           fsck.f2fs -a A.raw > A_fsck.log 2>&1
           echo "fsck exit $?"
@@ -125,7 +125,7 @@ jobs:
             -C $GITHUB_WORKSPACE/fs_config \
             -S $GITHUB_WORKSPACE/file_contexts \
             $GITHUB_WORKSPACE/C.raw > C_sload.log 2>&1
-          ./target/release/extract_f2fs -i $GITHUB_WORKSPACE/C.raw -o C_out > C_extract.log 2>&1
+          ./target/release/f2fs-utils extract -i $GITHUB_WORKSPACE/C.raw -o C_out > C_extract.log 2>&1
           rm -rf C_out/lost+found 2>/dev/null || true
           diff -r fixture C_out > C_diff.log 2>&1 || true
           ( cd C_out && sha256sum -c $GITHUB_WORKSPACE/fixture.sha256 ) > C_sha.log 2>&1 || true
@@ -140,7 +140,7 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          ./target/release/mkfs_f2fs --sparse -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+          ./target/release/f2fs-utils mkfs --sparse -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/D.sparse > D_mkfs.log 2>&1
           simg2img $GITHUB_WORKSPACE/D.sparse $GITHUB_WORKSPACE/D.raw > D_simg.log 2>&1
           fsck.f2fs -a $GITHUB_WORKSPACE/D.raw > D_fsck.log 2>&1
@@ -155,7 +155,7 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          ./target/release/mkfs_f2fs -z -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
+          ./target/release/f2fs-utils mkfs -z -f fixture -t $MOUNT_POINT -s $IMG_SIZE \
             -o $GITHUB_WORKSPACE/E.raw > E_mkfs.log 2>&1
           LOOP=$(sudo losetup -fP --show $GITHUB_WORKSPACE/E.raw)
           sudo mkdir -p /mnt /mnt_check_e

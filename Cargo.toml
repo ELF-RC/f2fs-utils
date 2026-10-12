@@ -15,12 +15,8 @@ name = "f2fs_utils"
 path = "src/lib.rs"
 
 [[bin]]
-name = "extract_f2fs"
-path = "src/bin/extract_f2fs.rs"
-
-[[bin]]
-name = "mkfs_f2fs"
-path = "src/bin/mkfs_f2fs.rs"
+name = "f2fs-utils"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
