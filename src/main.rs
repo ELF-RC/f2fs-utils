@@ -12,6 +12,7 @@
 
 use clap::{Parser, Subcommand};
 use f2fs_utils::extract::{ExtractConfig, extract};
+use f2fs_utils::fsck::{FsckConfig, fsck};
 use f2fs_utils::mkfs::{MkfsF2fsConfig, mkfs};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -31,8 +32,10 @@ struct Cli {
 enum Command {
     /// One-stop F2FS image builder for Android (mkfs + sload)
     Mkfs(MkfsArgs),
-    /// Extract an F2FS image and emit Android fs_config / file_contexts
+    /// Extract an F2FS image and emit Android `fs_config` / `file_contexts`
     Extract(ExtractArgs),
+    /// Check F2FS image consistency
+    Fsck(FsckArgs),
 }
 
 // ── mkfs 子命令 ──────────────────────────────────────────
@@ -118,11 +121,25 @@ struct ExtractArgs {
     file_contexts: Option<PathBuf>,
 }
 
+// ── fsck 子命令 ───────────────────────────────────────────
+
+#[derive(Parser)]
+struct FsckArgs {
+    /// 输入镜像路径
+    #[arg(short, long)]
+    input: PathBuf,
+
+    /// 自动修复 (只读检查, 不实际写回)
+    #[arg(short = 'a', long)]
+    auto_repair: bool,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Mkfs(args) => run_mkfs(args),
         Command::Extract(args) => run_extract(args),
+        Command::Fsck(args) => run_fsck(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -165,4 +182,16 @@ fn run_extract(args: ExtractArgs) -> anyhow::Result<()> {
         file_contexts_path: args.file_contexts,
     };
     extract(&cfg)
+}
+
+fn run_fsck(args: &FsckArgs) -> anyhow::Result<()> {
+    let cfg = FsckConfig {
+        input_image: args
+            .input
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("input path is not valid UTF-8"))?
+            .to_string(),
+        auto_repair: args.auto_repair,
+    };
+    fsck(&cfg)
 }
