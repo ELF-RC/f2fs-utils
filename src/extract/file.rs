@@ -10,8 +10,8 @@ use crate::extract::volume::F2fsVolume;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek};
 
-/// 压缩簇默认 block 数。
-const CLUSTER_SIZE: usize = 4;
+/// 压缩簇默认 block 数 (仅当 inode 无 log_cluster_size 时用)。
+const DEFAULT_CLUSTER_SIZE: usize = 4;
 
 impl<R: Read + Seek + Send> F2fsVolume<R> {
     /// 读取文件全部数据 (按 inode.size 截断)。
@@ -69,7 +69,15 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         let direct = read_u32_array(&node, inode.i_addr_offset(), inode.direct_addr_count());
 
         let expected = inode.size.div_ceil(F2FS_BLKSIZE as u64);
-        let total = inode.blocks.min(expected);
+        // 对压缩文件, i_blocks 只计物理块, 远小于逻辑块数; 用 expected (由 size 推算) 作为上限。
+        let total = expected;
+
+        // 从 inode 读取簇大小, 默认 4 块
+        let cluster_size = if inode.log_cluster_size > 0 {
+            1usize << inode.log_cluster_size
+        } else {
+            DEFAULT_CLUSTER_SIZE
+        };
 
         let mut blocks = Vec::new();
         let mut read = 0u64;
@@ -79,15 +87,15 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         while i < direct.len() && read < total {
             match BlockAddr::from(direct[i]) {
                 BlockAddr::Compress => {
-                    let cluster = self.read_cluster_blocks(&direct[i..]);
-                    let decompressed = Self::decompress_cluster(&cluster)?;
+                    let cluster = self.read_cluster_blocks(&direct[i..], cluster_size);
+                    let decompressed = Self::decompress_cluster(&cluster, cluster_size)?;
                     for blk in decompressed {
                         if read < total {
                             blocks.push(blk);
                             read += 1;
                         }
                     }
-                    i += CLUSTER_SIZE;
+                    i += cluster_size;
                 }
                 BlockAddr::Valid(b) if self.is_valid_block(b) => {
                     blocks.push(self.read_block(b)?);
@@ -105,13 +113,13 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
 
         // 间接/二级间接块
         if read < total {
-            let indirect = self.read_indirect_blocks(&node, inode, total - read)?;
+            let indirect = self.read_indirect_blocks(&node, inode, total - read, cluster_size)?;
             blocks.extend(indirect);
         }
         Ok(blocks)
     }
 
-    fn read_indirect_blocks(&self, node: &[u8], inode: &Inode, count: u64) -> Result<Vec<Vec<u8>>> {
+    fn read_indirect_blocks(&self, node: &[u8], inode: &Inode, count: u64, cluster_size: usize) -> Result<Vec<Vec<u8>>> {
         let off = inode.i_addr_offset() + DEF_ADDRS_PER_INODE * 4;
         let i_nid = read_u32_array(node, off, NIDS_PER_INODE);
         let mut blocks = Vec::new();
@@ -122,7 +130,7 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
             if read >= count || n == 0 {
                 continue;
             }
-            let got = self.read_direct_node(Nid(n), count - read)?;
+            let got = self.read_direct_node(Nid(n), count - read, cluster_size)?;
             read += got.len() as u64;
             blocks.extend(got);
         }
@@ -131,14 +139,14 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
             if read >= count || n == 0 {
                 continue;
             }
-            let got = self.read_indirect_node(Nid(n), count - read)?;
+            let got = self.read_indirect_node(Nid(n), count - read, cluster_size)?;
             read += got.len() as u64;
             blocks.extend(got);
         }
         Ok(blocks)
     }
 
-    fn read_direct_node(&self, nid: Nid, count: u64) -> Result<Vec<Vec<u8>>> {
+    fn read_direct_node(&self, nid: Nid, count: u64, cluster_size: usize) -> Result<Vec<Vec<u8>>> {
         let node = self.read_node(nid)?;
         let addrs = read_u32_array(&node, 0, DEF_ADDRS_PER_BLOCK);
         let mut blocks = Vec::new();
@@ -146,14 +154,14 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         while i < addrs.len() && (blocks.len() as u64) < count {
             match BlockAddr::from(addrs[i]) {
                 BlockAddr::Compress => {
-                    let cluster = self.read_cluster_blocks(&addrs[i..]);
-                    let decompressed = Self::decompress_cluster(&cluster)?;
+                    let cluster = self.read_cluster_blocks(&addrs[i..], cluster_size);
+                    let decompressed = Self::decompress_cluster(&cluster, cluster_size)?;
                     for blk in decompressed {
                         if (blocks.len() as u64) < count {
                             blocks.push(blk);
                         }
                     }
-                    i += CLUSTER_SIZE;
+                    i += cluster_size;
                 }
                 BlockAddr::Valid(b) if self.is_valid_block(b) => {
                     blocks.push(self.read_block(b)?);
@@ -169,7 +177,7 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         Ok(blocks)
     }
 
-    fn read_indirect_node(&self, nid: Nid, count: u64) -> Result<Vec<Vec<u8>>> {
+    fn read_indirect_node(&self, nid: Nid, count: u64, cluster_size: usize) -> Result<Vec<Vec<u8>>> {
         let node = self.read_node(nid)?;
         let nids = read_u32_array(&node, 0, DEF_ADDRS_PER_BLOCK);
         let mut blocks = Vec::new();
@@ -177,7 +185,7 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
             if (blocks.len() as u64) >= count || n == 0 {
                 continue;
             }
-            let got = self.read_direct_node(Nid(n), count - blocks.len() as u64)?;
+            let got = self.read_direct_node(Nid(n), count - blocks.len() as u64, cluster_size)?;
             blocks.extend(got);
         }
         Ok(blocks)
@@ -187,8 +195,8 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
     ///
     /// F2FS 压缩格式: 首个 block 前 24 字节为头 (clen(4)+chksum(4)+reserved(16)),
     /// 其后是 clen 字节压缩载荷。
-    fn decompress_cluster(compressed_blocks: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-        let out = vec![zero_block(); CLUSTER_SIZE];
+    fn decompress_cluster(compressed_blocks: &[Vec<u8>], cluster_size: usize) -> Result<Vec<Vec<u8>>> {
+        let out = vec![zero_block(); cluster_size];
         if compressed_blocks.is_empty() {
             return Ok(out);
         }
@@ -207,16 +215,30 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
         }
 
         let compressed = &payload[24..24 + clen];
-        let decompressed_size = CLUSTER_SIZE * F2FS_BLKSIZE;
+        let decompressed_size = cluster_size * F2FS_BLKSIZE;
 
-        // 当前仅实现 LZ4 (F2FS 默认算法)
+        // 根据算法选择解压方式
+        // 算法字段在 inode 的 i_compress_algorithm (偏移 392), 但这里我们
+        // 只拿到了压缩数据块, 算法信息由调用方在 inode 中查询。
+        // 当前实现: 尝试 LZ4, 失败则尝试 ZSTD
         let decompressed = match lz4_flex::decompress(compressed, decompressed_size) {
             Ok(d) => d,
-            Err(e) => return Err(F2fsError::Decompression(e.to_string())),
+            Err(_) => {
+                // LZ4 失败, 尝试 ZSTD
+                match zstd::stream::decode_all(compressed) {
+                    Ok(d) => {
+                        let mut buf = vec![0u8; decompressed_size];
+                        let copy_len = d.len().min(decompressed_size);
+                        buf[..copy_len].copy_from_slice(&d[..copy_len]);
+                        buf
+                    }
+                    Err(e) => return Err(F2fsError::Decompression(format!("lz4+zstd both failed: {e}"))),
+                }
+            }
         };
 
-        let mut blocks = Vec::with_capacity(CLUSTER_SIZE);
-        for i in 0..CLUSTER_SIZE {
+        let mut blocks = Vec::with_capacity(cluster_size);
+        for i in 0..cluster_size {
             let start = i * F2FS_BLKSIZE;
             let end = start + F2FS_BLKSIZE;
             if end <= decompressed.len() {
@@ -233,8 +255,8 @@ impl<R: Read + Seek + Send> F2fsVolume<R> {
     }
 
     /// 读取压缩簇内的实际数据 block (跳过 Compress/Null 标记)。
-    fn read_cluster_blocks(&self, addrs: &[u32]) -> Vec<Vec<u8>> {
-        let take = CLUSTER_SIZE.min(addrs.len());
+    fn read_cluster_blocks(&self, addrs: &[u32], cluster_size: usize) -> Vec<Vec<u8>> {
+        let take = addrs.len().min(cluster_size);
         let mut blocks = Vec::with_capacity(take);
         for &addr in &addrs[..take] {
             match BlockAddr::from(addr) {

@@ -24,6 +24,7 @@ thiserror = "2.0"
 byteorder = "1.5"
 clap = { version = "4.6", features = ["derive"] }
 lz4_flex = "0.14"
+zstd = "0.13"
 regex = "1.11"
 
 [profile.release]

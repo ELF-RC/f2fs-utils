@@ -108,3 +108,47 @@ pub const INODE_OFF_COMPRESS_FLAG: usize = 394;
 
 // 压缩簇头: clen(4) + chksum(4) + reserved(16) = 24 字节
 pub const COMPRESS_HEADER_SIZE: usize = 24;
+
+// ── 超级块新字段偏移 ──
+pub const SB_OFF_EXTENSION_COUNT: usize = 1148;
+pub const SB_OFF_EXTENSION_LIST: usize = 1152;
+pub const SB_OFF_ENCRYPTION_LEVEL: usize = 2184;
+pub const SB_OFF_ENCRYPT_PW_SALT: usize = 2185;
+pub const SB_OFF_DEVS: usize = 2201;
+pub const SB_OFF_QF_INO: usize = 2745;
+pub const SB_OFF_HOT_EXT_COUNT: usize = 2757;
+pub const SB_OFF_S_ENCODING: usize = 2758;
+pub const SB_OFF_S_ENCODING_FLAGS: usize = 2760;
+
+// extension 列表
+pub const F2FS_MAX_EXTENSION: usize = 64;
+pub const F2FS_EXTENSION_LEN: usize = 8;
+
+// casefold encoding
+pub const F2FS_ENC_UTF8_12_1: u16 = 1;
+
+// compression level 编码: i_compress_flag 的 [8,15] 位为压缩等级
+pub const COMPRESS_LEVEL_SHIFT: u16 = 8;
+pub const COMPRESS_LEVEL_MASK: u16 = 0xFF00;
+pub const COMPRESS_CHKSUM_FLAG: u16 = 0x0001;
+
+// 压缩等级范围
+pub const LZ4_MIN_LEVEL: u8 = 3;
+pub const LZ4_MAX_LEVEL: u8 = 16;
+pub const ZSTD_MIN_LEVEL: u8 = 1;
+pub const ZSTD_MAX_LEVEL: u8 = 22;
+
+// F2FS_FEATURE_RO (readonly)
+pub const F2FS_FEATURE_RO: u32 = 0x0000_4000;
+
+// 默认扩展名列表 (cold/media 文件 + hot 文件)
+pub const DEFAULT_MEDIA_EXTENSIONS: &[&[u8]] = &[
+    b"mp", b"wm", b"og", b"jp", b"avi", b"m4v", b"m4p", b"mkv", b"mov", b"webm",
+    b"wav", b"m4a", b"3gp", b"opus", b"flac", b"gif", b"png", b"svg", b"webp",
+    b"jar", b"deb", b"iso", b"gz", b"xz", b"zst", b"pdf", b"pyc", b"ttc", b"ttf",
+    b"exe", b"apk", b"cnt", b"exo", b"odex", b"vdex", b"so",
+];
+
+pub const DEFAULT_HOT_EXTENSIONS: &[&[u8]] = &[
+    b"db",
+];

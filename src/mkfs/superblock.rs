@@ -237,6 +237,42 @@ impl SuperblockBuilder {
 
         buf[2180..2184].copy_from_slice(&self.features.to_bits().to_le_bytes());
 
+        // extension list (cold/media 文件 + hot 文件)
+        let mut ext_pos = 0usize;
+        for ext in DEFAULT_MEDIA_EXTENSIONS {
+            if ext_pos >= F2FS_MAX_EXTENSION {
+                break;
+            }
+            let len = ext.len().min(F2FS_EXTENSION_LEN);
+            buf[SB_OFF_EXTENSION_LIST + ext_pos * F2FS_EXTENSION_LEN
+                ..SB_OFF_EXTENSION_LIST + ext_pos * F2FS_EXTENSION_LEN + len]
+                .copy_from_slice(&ext[..len]);
+            ext_pos += 1;
+        }
+        let ext_count = ext_pos as u32;
+        buf[SB_OFF_EXTENSION_COUNT..SB_OFF_EXTENSION_COUNT + 4]
+            .copy_from_slice(&ext_count.to_le_bytes());
+
+        for ext in DEFAULT_HOT_EXTENSIONS {
+            if ext_pos >= F2FS_MAX_EXTENSION {
+                break;
+            }
+            let len = ext.len().min(F2FS_EXTENSION_LEN);
+            buf[SB_OFF_EXTENSION_LIST + ext_pos * F2FS_EXTENSION_LEN
+                ..SB_OFF_EXTENSION_LIST + ext_pos * F2FS_EXTENSION_LEN + len]
+                .copy_from_slice(&ext[..len]);
+            ext_pos += 1;
+        }
+        let hot_ext_count = (ext_pos as u8) - (ext_count as u8);
+        buf[SB_OFF_HOT_EXT_COUNT] = hot_ext_count;
+
+        // casefold: 如果启用 CASEFOLD 特性, 写入 encoding
+        if self.features.bits & F2FS_FEATURE_CASEFOLD != 0 {
+            let enc = F2FS_ENC_UTF8_12_1;
+            buf[SB_OFF_S_ENCODING..SB_OFF_S_ENCODING + 2].copy_from_slice(&enc.to_le_bytes());
+            // encoding_flags = 0 (normal mode)
+        }
+
         if self.features.sb_chksum() {
             let crc = crc32(&buf[..SB_CHKSUM_OFFSET]);
             buf[SB_CHKSUM_OFFSET..SB_CHKSUM_OFFSET + 4].copy_from_slice(&crc.to_le_bytes());

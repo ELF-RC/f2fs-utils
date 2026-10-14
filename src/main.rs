@@ -41,6 +41,7 @@ enum Command {
 // ── mkfs 子命令 ──────────────────────────────────────────
 
 #[derive(Parser)]
+#[allow(clippy::struct_excessive_bools)]
 struct MkfsArgs {
     /// 源目录 (要装载的文件树根)
     #[arg(short, long)]
@@ -93,6 +94,14 @@ struct MkfsArgs {
     /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB
     #[arg(long = "cluster-log", default_value_t = 2)]
     cluster_log: u8,
+
+    /// 压缩等级 (LZ4: 3-16, ZSTD: 1-22, 0 = 默认)
+    #[arg(long = "compress-level", default_value_t = 0)]
+    compress_level: u8,
+
+    /// 启用 casefold (大小写不敏感文件名, Android 14+ 部分分区)
+    #[arg(long)]
+    casefold: bool,
 }
 
 // ── extract 子命令 ───────────────────────────────────────
@@ -165,6 +174,8 @@ fn run_mkfs(args: MkfsArgs) -> anyhow::Result<()> {
         compression: args.compression,
         compress_algo: args.compress_algo,
         cluster_log: args.cluster_log,
+        compress_level: args.compress_level,
+        casefold: args.casefold,
     };
     mkfs(cfg)
 }

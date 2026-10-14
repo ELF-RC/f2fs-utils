@@ -45,6 +45,7 @@ use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
 /// mkfs 配置。
+#[allow(clippy::struct_excessive_bools)]
 pub struct MkfsF2fsConfig {
     /// 源目录 (要装载的文件树根)。
     pub source_dir: PathBuf,
@@ -72,6 +73,10 @@ pub struct MkfsF2fsConfig {
     pub compress_algo: String,
     /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB。
     pub cluster_log: u8,
+    /// 压缩等级 (LZ4: 3-16, ZSTD: 1-22, 0 = 默认)。
+    pub compress_level: u8,
+    /// 启用 casefold (大小写不敏感文件名)。
+    pub casefold: bool,
 }
 
 /// 一站式构建入口。
@@ -79,11 +84,13 @@ pub fn mkfs(cfg: MkfsF2fsConfig) -> Result<()> {
     let label = cfg.label.clone().unwrap_or_else(|| cfg.mount_point.clone());
     let mut features = F2fsFeatures::default();
     if cfg.readonly {
-        // RO 特性: 简化为追加 RO bit (复刻 -O ro)
-        features.bits |= 0x4000;
+        features.bits |= crate::mkfs::consts::F2FS_FEATURE_RO;
     }
     if cfg.compression {
         features.bits |= crate::mkfs::consts::F2FS_FEATURE_COMPRESSION;
+    }
+    if cfg.casefold {
+        features.bits |= crate::mkfs::consts::F2FS_FEATURE_CASEFOLD;
     }
 
     let compress_algo = match cfg.compress_algo.as_str() {
@@ -106,6 +113,8 @@ pub fn mkfs(cfg: MkfsF2fsConfig) -> Result<()> {
         compression: cfg.compression,
         compress_algo,
         cluster_log: cfg.cluster_log,
+        compress_level: cfg.compress_level,
+        casefold: cfg.casefold,
     };
 
     build_f2fs_image(inner).map_err(|e| anyhow!(e))

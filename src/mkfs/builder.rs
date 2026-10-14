@@ -60,6 +60,10 @@ pub struct MkfsConfig {
     pub compress_algo: u8,
     /// log2(压缩簇块数), 默认 2 = 4 块 = 16KB。
     pub cluster_log: u8,
+    /// 压缩等级 (LZ4: 3-16, ZSTD: 1-22, 0 = 默认)。
+    pub compress_level: u8,
+    /// 启用 casefold (大小写不敏感文件名)。
+    pub casefold: bool,
 }
 
 /// 待写入的目录 (延迟写 inode: 子项装载完毕后才知道 links/size)。
@@ -112,6 +116,8 @@ pub struct F2fsBuilder {
     compress_algo: u8,
     /// log2(压缩簇块数)。
     cluster_log: u8,
+    /// 压缩等级 (LZ4: 3-16, ZSTD: 1-22)。
+    compress_level: u8,
 }
 
 impl F2fsBuilder {
@@ -158,6 +164,7 @@ impl F2fsBuilder {
         let compression = cfg.compression;
         let compress_algo = cfg.compress_algo;
         let cluster_log = cfg.cluster_log;
+        let compress_level = cfg.compress_level;
 
         Ok(Self {
             cfg,
@@ -181,6 +188,7 @@ impl F2fsBuilder {
             compression,
             compress_algo,
             cluster_log,
+            compress_level,
         })
     }
 
@@ -391,7 +399,7 @@ impl F2fsBuilder {
                         .with_pino(parent_nid)
                         .with_name(name.as_bytes())
                         .with_addrs(data_addrs)
-                        .with_compression(self.compress_algo, self.cluster_log, compr_blocks)
+                        .with_compression(self.compress_algo, self.cluster_log, compr_blocks, self.compress_level)
                 } else {
                     let data_addrs = self.write_file_data(&data, nid)?;
                     let blocks = data_addrs.len() as u64 + 1;
@@ -479,7 +487,25 @@ impl F2fsBuilder {
             let mut padded = cluster_data.to_vec();
             padded.resize(cluster_size, 0);
 
-            let compressed = lz4_flex::compress(&padded);
+            // 根据算法选择压缩方式
+            let compressed = match self.compress_algo {
+                crate::mkfs::consts::COMPRESS_ZSTD => {
+                    let level = self.compress_level.clamp(
+                        crate::mkfs::consts::ZSTD_MIN_LEVEL,
+                        crate::mkfs::consts::ZSTD_MAX_LEVEL,
+                    );
+                    zstd::stream::encode_all(padded.as_slice(), i32::from(level))
+                        .unwrap_or_else(|_| padded.clone())
+                }
+                crate::mkfs::consts::COMPRESS_LZO => {
+                    // LZO not available in pure Rust; fall back to no compression
+                    padded.clone()
+                }
+                _ => {
+                    // LZ4 (默认)
+                    lz4_flex::compress(&padded)
+                }
+            };
             let header_and_payload_len = COMPRESS_HEADER_SIZE + compressed.len();
             let phys_blks = header_and_payload_len.div_ceil(F2FS_BLKSIZE);
 
@@ -491,6 +517,7 @@ impl F2fsBuilder {
                     self.mark_data_block(blkaddr, nid, addrs.len() as u16, SegType::WarmData);
                     addrs.push(blkaddr);
                     self.valid_block_count += 1;
+                    compr_blocks += 1;
                 }
                 continue;
             }

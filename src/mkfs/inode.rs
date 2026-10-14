@@ -238,12 +238,17 @@ impl InodeBuilder {
         self.inline_flags |= F2FS_INLINE_DATA | F2FS_DATA_EXIST;
         self
     }
-
-    pub fn with_compression(mut self, algo: u8, log_cluster_size: u8, compr_blocks: u32) -> Self {
+pub fn with_compression(mut self, algo: u8, log_cluster_size: u8, compr_blocks: u32, compress_level: u8) -> Self {
         self.compress_algorithm = algo;
         self.log_cluster_size = log_cluster_size;
         self.compr_blocks = compr_blocks;
-        self.compress_flag = 1; // F2FS Compress_File_Flag
+        // bit 0: compress flag (file is compressed)
+        // bits [8,15]: compress level (0 = default)
+        let mut flag: u16 = 1; // F2FS Compress_File_Flag
+        if compress_level > 0 {
+            flag |= u16::from(compress_level) << 8;
+        }
+        self.compress_flag = flag;
         self.has_extra_attr = true;
         self
     }

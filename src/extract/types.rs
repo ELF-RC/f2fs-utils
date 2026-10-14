@@ -138,6 +138,8 @@ pub struct Inode {
     pub flags: u32,
     pub xattr_nid: u32,
     pub extra_isize: u16,
+    /// log2(压缩簇块数), 仅当 compression 特性启用时有效 (偏移 393)。
+    pub log_cluster_size: u8,
 }
 
 impl Inode {
@@ -167,6 +169,10 @@ impl Inode {
         cur.set_position(360);
         let extra_isize = cur.read_u16::<LittleEndian>()?;
 
+        // log_cluster_size @ offset 393
+        cur.set_position(393);
+        let log_cluster_size = cur.read_u8()?;
+
         Ok(Self {
             mode,
             inline,
@@ -177,6 +183,7 @@ impl Inode {
             flags,
             xattr_nid,
             extra_isize,
+            log_cluster_size,
         })
     }
 
