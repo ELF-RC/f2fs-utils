@@ -11,6 +11,7 @@
 //!
 //! CRC 算法 (seed = F2FS_MAGIC, 不取反) 见 crc。
 
+pub mod ascii;
 pub mod builder;
 pub mod checkpoint;
 pub mod config;

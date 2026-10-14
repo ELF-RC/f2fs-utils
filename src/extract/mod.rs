@@ -226,6 +226,12 @@ fn record_context(
                     if !ctx.ends_with(":s0") {
                         ctx.push_str(":s0");
                     }
+                    // 如果上下文含非 ASCII (如中文), 音译为 ASCII
+                    let ctx = if ctx.is_ascii() {
+                        ctx
+                    } else {
+                        crate::mkfs::ascii::transliterate_context(&ctx)
+                    };
                     ctx_entries.insert(rel.to_string_lossy().into_owned(), ctx);
                 }
             }

@@ -145,7 +145,7 @@ impl SelinuxContexts {
 
     pub fn parse(content: &str) -> anyhow::Result<Self> {
         let mut entries = Vec::new();
-        for line in content.lines() {
+        for (lineno, line) in content.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -157,6 +157,9 @@ impl SelinuxContexts {
             }
             let pattern = parts[0];
             let selinux_ctx = parts[1];
+            // file_contexts 必须是纯 ASCII
+            crate::mkfs::ascii::ensure_ascii(pattern, &format!("file_contexts line {lineno} pattern"))?;
+            crate::mkfs::ascii::ensure_ascii(selinux_ctx, &format!("file_contexts line {lineno} context"))?;
             // file_contexts 模式为 PCRE, Rust regex 支持子集
             let re = format!("^{pattern}$");
             if let Ok(regex) = Regex::new(&re) {

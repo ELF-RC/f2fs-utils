@@ -692,10 +692,19 @@ impl F2fsBuilder {
     }
 
     /// 应用 SELinux 上下文 (若提供且命中)。
+    /// 如果 fs_path 含非 ASCII 字符 (如中文目录名), 先音译为 ASCII 再匹配。
     fn apply_selinux(&mut self, inode: InodeBuilder, fs_path: &str) -> InodeBuilder {
         if let Some(ref mut selinux) = self.selinux {
+            // 先尝试原始路径
             if let Some(ctx) = selinux.lookup(fs_path) {
                 return inode.with_selinux_context(&ctx);
+            }
+            // 原始路径未命中, 尝试音译后的路径
+            if !crate::mkfs::ascii::is_ascii(fs_path) {
+                let transliterated = crate::mkfs::ascii::transliterate_path(fs_path);
+                if let Some(ctx) = selinux.lookup(&transliterated) {
+                    return inode.with_selinux_context(&ctx);
+                }
             }
         }
         inode
